@@ -2,42 +2,71 @@
 // bit manipulation functions
 //
 
+extern chpl_leadz8(uint(8)): c_int;
+extern chpl_leadz16(uint(16)): c_int;
+extern chpl_leadz32(uint(32)): c_int;
+extern chpl_leadz64(uint(64)): c_int;
+
+extern chpl_trailz8(uint(8)): c_int;
+extern chpl_trailz16(uint(16)): c_int;
+extern chpl_trailz32(uint(32)): c_int;
+extern chpl_trailz64(uint(64)): c_int;
+
+extern chpl_popcnt8(uint(8)): c_int;
+extern chpl_popcnt16(uint(16)): c_int;
+extern chpl_popcnt32(uint(32)): c_int;
+extern chpl_popcnt64(uint(64)): c_int;
+
+
 // reimplementation note: one bitPop routine when numBits is a parameter
 proc bitPop(i: integral) where (i.type == int(64)) || (i.type == uint(64)) {
-  const u1 = 10540996613548315209:uint(64);
-  const u3 = 13176245766935394011:uint(64);
-  const u7 = 9349719599003471367:uint(64);
-  var ii = i: uint(64);
-  var tmp = ii - ((ii >> 1) & u3) - ((ii >> 2) & u1);
-  return ((((tmp + (tmp >> 3)) & u7) + ((tmp >> 6) & u7)) % 511):int;
+  return chpl_popcnt64( i:uint(64) ):int;
 }
 
 proc bitPop(i: integral) where (i.type == int(32)) || (i.type == uint(32)) {
-  const u1 = 10540996613548315209:uint(32);
-  const u3 = 13176245766935394011:uint(32);
-  const u7 = 9349719599003471367:uint(32);
-  var ii = i: uint(32);
-  var tmp = ii - ((ii >> 1) & u3) - ((ii >> 2) & u1);
-  return ((((tmp + (tmp >> 3)) & u7) + ((tmp >> 6) & u7)) % 511):int;
+  return chpl_popcnt32( i:uint(32) ):int;
 }
 
 proc bitPop(i: integral) where (i.type == int(16)) || (i.type == uint(16)) {
-  const u1 = 10540996613548315209:uint(16);
-  const u3 = 13176245766935394011:uint(16);
-  const u7 = 9349719599003471367:uint(16);
-  var ii = i: uint(16);
-  var tmp = ii - ((ii >> 1) & u3) - ((ii >> 2) & u1);
-  return ((((tmp + (tmp >> 3)) & u7) + ((tmp >> 6) & u7)) % 511):int;
+  return chpl_popcnt16( i:uint(16) ):int;
 }
 
 proc bitPop(i: integral) where (i.type == int(8)) || (i.type == uint(8)) {
-  const u1 = 10540996613548315209:uint(8);
-  const u3 = 13176245766935394011:uint(8);
-  const u7 = 9349719599003471367:uint(8);
-  var ii = i: uint(8);
-  var tmp = ii - ((ii >> 1) & u3) - ((ii >> 2) & u1);
-  return ((((tmp + (tmp >> 3)) & u7) + ((tmp >> 6) & u7)) % 511):int;
+  return chpl_popcnt8( i:uint(8) ):int;
 }
+
+proc leadz(i: integral) where (i.type == int(64)) || (i.type == uint(64)) {
+  return chpl_leadz64( i:uint(64) ):int;
+}
+
+proc leadz(i: integral) where (i.type == int(32)) || (i.type == uint(32)) {
+  return chpl_leadz32( i:uint(32) ):int;
+}
+
+proc leadz(i: integral) where (i.type == int(16)) || (i.type == uint(16)) {
+  return chpl_leadz16( i:uint(16) ):int;
+}
+
+proc leadz(i: integral) where (i.type == int(8)) || (i.type == uint(8)) {
+  return chpl_leadz8( i:uint(8) ):int;
+}
+
+proc trailz(i: integral) where (i.type == int(64)) || (i.type == uint(64)) {
+  return chpl_trailz64( i:uint(64) ):int;
+}
+
+proc trailz(i: integral) where (i.type == int(32)) || (i.type == uint(32)) {
+  return chpl_trailz32( i:uint(32) ):int;
+}
+
+proc trailz(i: integral) where (i.type == int(16)) || (i.type == uint(16)) {
+  return chpl_trailz16( i:uint(16) ):int;
+}
+
+proc trailz(i: integral) where (i.type == int(8)) || (i.type == uint(8)) {
+  return chpl_trailz8( i:uint(8) ):int;
+}
+
 
 
 // do a bitwise matrix-multiplication of x and y treating

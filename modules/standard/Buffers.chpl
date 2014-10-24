@@ -41,10 +41,11 @@ module BufferInternals {
   extern proc qbuffer_iter_prev_part(buf:qbuffer_ptr_t, inout it:qbuffer_iter_t);
   extern proc qbuffer_iter_advance(buf:qbuffer_ptr_t, inout it:qbuffer_iter_t, amt:int(64));
 
-  extern proc qbuffer_iter_get(it: qbuffer_iter_t, end:qbuffer_iter_t, 
-                                inout bytes_out:qbytes_ptr_t,
-                                inout skip_out:int(64),
-                                inout len_out:int(64));
+  extern proc qbuffer_iter_get(buf:qbuffer_ptr_t,
+                               it: qbuffer_iter_t, end:qbuffer_iter_t, 
+                               inout bytes_out:qbytes_ptr_t,
+                               inout skip_out:int(64),
+                               inout len_out:int(64));
   extern proc qbuffer_iter_num_bytes(start:qbuffer_iter_t, end:qbuffer_iter_t):int(64);
 
 

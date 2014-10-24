@@ -23,9 +23,9 @@ typedef atomic_uint_least64_t qbytes_refcnt_t;
   if( ptr ) { \
     qb_refcnt_base_t old_cnt = atomic_fetch_add_uint_least64_t (&ptr->ref_cnt, 1); \
     /* if it was 0, we couldn't have had a ref to it */ \
-    if( old_cnt == 0 ) *(int *)(0) = 0; /* deliberately segfault. */ \
+    if( old_cnt == 0 ) *(volatile int *)(0) = 0; /* deliberately segfault. */ \
     /* if it is now 0, we overflowed the number */ \
-    if( old_cnt + 1 == 0 ) *(int *)(0) = 0; /* deliberately segfault. */ \
+    if( old_cnt + 1 == 0 ) *(volatile int *)(0) = 0; /* deliberately segfault. */ \
   } \
 }
 
@@ -39,7 +39,7 @@ typedef atomic_uint_least64_t qbytes_refcnt_t;
       free_function(ptr); \
     } else { \
       /* old_cnt == 0 is a fatal error (underflow) */ \
-      if( old_cnt == 0 ) *(int *)(0) = 0; /* deliberately segfault. */ \
+      if( old_cnt == 0 ) *(volatile int *)(0) = 0; /* deliberately segfault. */ \
     } \
   } \
 }
@@ -48,6 +48,7 @@ typedef atomic_uint_least64_t qbytes_refcnt_t;
 
 // how large is an iobuf?
 extern size_t qbytes_iobuf_size;
+extern size_t qbytes_smallbuf_size;
 
 struct qbytes_s;
 
@@ -56,15 +57,23 @@ typedef void (*qbytes_free_t)(struct qbytes_s*);
 
 /* A qbytes_t is just some data with a length.
  * It is a reference-counted class type.
- * Once a qbytes_t is only the reference count may change;
+ * Once a qbytes_t is made, only the reference count may change;
  * all the other fields must remain fixed. (Note that the
- * memory pointed to by data may change).
+ * memory pointed to by data may change, but depending on
+ * the context, that might be immutable as well).
  *
  * The free function must free both the bytes buffer as well
  * as the qbytes object itself.
  *
  * Multiple threads accessing qbytes must be managed by means
  * outside of the qbytes.
+ *
+ * It would be possible to store the reference count under
+ * a different pointer, so that instead of qbytes_t* we
+ * would use {qbytes_t*, refcnt_t*}, but experiments
+ * with C++ reference counting implementations indicate
+ * that this kind of "internal reference count" is
+ * faster than the 2-pointer version.
  */
 typedef struct qbytes_s {
   // reference count which is atomically updated
@@ -73,10 +82,6 @@ typedef struct qbytes_s {
   void* data;
   int64_t len;
   qbytes_free_t free_function;
-  uint8_t flags; // is it const?
-  uint8_t unused1;
-  uint16_t unused2;
-  uint32_t unused3; // this could be locale UID of the pointer!
 } qbytes_t;
 
 // These are necessary for extern class in Chapel.
@@ -110,10 +115,15 @@ void qbytes_free_qio_free(qbytes_t* b);
 
 void _qbytes_init_generic(qbytes_t* ret, void* give_data, int64_t len, qbytes_free_t free_function);
 err_t qbytes_create_generic(qbytes_t** out, void* give_data, int64_t len, qbytes_free_t free_function);
-err_t _qbytes_init_iobuf(qbytes_t* ret);
+err_t _qbytes_init_iobuf(qbytes_t* ret, int64_t size);
 err_t qbytes_create_iobuf(qbytes_t** out);
 err_t _qbytes_init_calloc(qbytes_t* ret, int64_t len);
 err_t qbytes_create_calloc(qbytes_t** out, int64_t len);
+err_t qbytes_create_malloc(qbytes_t** out, int64_t len);
+
+// Create a page-aligned buffer if it's >= qbytes_iobuf_size
+// or just a normally allocated buffer otherwise.
+err_t qbytes_create_buffer(qbytes_t** out, int64_t len);
 
 static inline
 int64_t qbytes_len(qbytes_t* b)
@@ -129,26 +139,80 @@ void* qbytes_data(qbytes_t* b)
 
 typedef enum {
   QB_PART_FLAGS_NONE = 0,
-  QB_PART_FLAGS_EXTENDABLE_TO_ENTIRE_BYTES = 1,
+
+  // the regions of the qbytes object not used by
+  // buffer part could be used and mutated.
+  QB_PART_FLAGS_REST_MUTABLE = 1,
+
+  // the data in the buffer part can be mutated
+  // (normally that means it has not been shared)
+  QB_PART_FLAGS_MUTABLE = 2,
 } qbuffer_part_flags_t;
 
 typedef struct qbuffer_part_s {
   // part refers to the region
-  // [bytes->data + skip_bytes, bytes->data + skip_bytes + len_bytes)
+  // [bytes->data + itemsz*skip, bytes->data + itemsz*(skip + len) )
   qbytes_t* bytes;
-  int64_t skip_bytes;
-  int64_t len_bytes; // does not include skip_bytes
-  int64_t end_offset; // in bytes; subtract len_bytes from this to get start_offset
+  int64_t skip; // in items
+  int64_t len; // in items; does not include skip
+                      
+  // end_offset is in items but betwen buf->offset_start and buf->offset_end
+  int64_t end_offset; // in items; subtract len_items from this to get start_offset
+
   qbuffer_part_flags_t flags;
-  // for unicode strings, we might add a end_in_characters
+ 
+  // for UTF-8 strings. INT64_MIN if not known.
+  int64_t end_offset_characters;
 } qbuffer_part_t;
+
+typedef enum {
+  QB_OTHER = 0,
+  QB_EVEN = 1,
+  QB_POWERS = 2
+} qbuffer_type_t;
 
 /* A buffer is a group of bytes_t objects. It has:
  *  - some number of bytes_t objects (reference counted)
  *
- *  Buffers support O(1) push/pop on front/back of bytes, simple&fast iteration,
- *  and logarithmic indexing operations. They're not meant to support
- *  fast inserting at any position.
+ *  We say a buffer refers to a total of n bytes,
+ *  and it does so with b bytes_t objects.
+ *
+ *  Buffers support O(1) push/pop on front/back of bytes objects,
+ *  simple&fast iteration, and O(1) or O(log b) indexing.
+ *
+ *  Inserting/deleting at any position O(b) - but in practice
+ *  depending on the situation it may be O(sqrt(b)) or O(1).
+ *
+ *  For buffers that grow, we use the structure  
+ *  described in "Singly Resizable Arrays and Deques" section of
+ *  Brodnik Carlsson Demaine Munro Sedgewick
+ *  "Resizable Arrays in Optimal Time and Space" which gives O(1)
+ *  indexing and O(sqrt(n)) space overhead with O(sqrt(n)) blocks.
+ *  We modify that algorithm to treat the first three blocks differently:
+ *   - the optional first block can be a non-power-of-two size
+ *   - the second block + the optional first block add to a power of 2,
+ *     which is 1 << log2_items_starting
+ *   - the third block is the same size as second block + optional first block,
+ *     that is, 1 << log2_items_starting
+ *
+ *  Why?
+ *   - non-power-of-2 first block allows a growable array to
+ *     start out by referring to a qbytes
+ *   - third block same size as second + first causes each block
+ *     of size 2^k to be 2^k aligned were the result to be flattened -
+ *     which is a useful property for I/O where page alignment might
+ *     lead to higher performance.
+ *
+ *  Note - as implementation terminology, we call a block the "anchor" block:
+ *    If there is an optional out-of-pattern first block,
+ *    the "anchor" block is the second block, so that end_offset
+ *    of the "anchor" block is in pattern. If there is no optional
+ *    out-of-pattern first block, the "anchor" block is the first block.
+ *
+ *  However, one can concatenate buffers or append one buffer to
+ *  another. If these are done to a growing "powers" buffer,
+ *  the result will not be "powers" (that is, indexing will
+ *  become O(log b) ).
  *
  * Buffers are not inherently thread-safe and access should
  * be protected by some other means.
@@ -159,8 +223,22 @@ typedef struct qbuffer_part_s {
 typedef struct qbuffer_s {
   qbytes_refcnt_t ref_cnt; // atomically updated
   deque_t deque; // contains qbuffer_part_t s 
-  int64_t offset_start;
+  int64_t offset_start; // in items
   int64_t offset_end;
+
+  int64_t item_size; // compute indexes in terms of i'th element;
+                     // sizes above are in terms of elements (not bytes)!
+                     // but in many important cases, element_size == 1.
+
+
+  // Support 3 different buffer forms:
+  //  - "even" all the same block size 2^n, front/back may be empty
+  //  - "powers" a la "Resizable Arrays in Optimal Time and Space"
+  //  - "other" anything else
+
+  // "even" and "powers" treat the first and second blocks specially.
+  qbuffer_type_t type; // QB_OTHER, QB_EVEN, QB_POWERS
+  int8_t log2_items_starting; // for "even", == log2_items_per_block
 } qbuffer_t;
 
 typedef qbuffer_t _qbuffer_ptr_t;
@@ -193,15 +271,19 @@ int qbuffer_is_initialized(qbuffer_t* buf) {
 
 /* Initialize a buffer */
 err_t qbuffer_init(qbuffer_t* buf);
+err_t qbuffer_init_type(qbuffer_t* buf, qbuffer_type_t type);
 
 /* Destroy a buffer inited with qbuffer_init */
-err_t qbuffer_destroy(qbuffer_t* buf);
-
-/* Destroy a buffer and free() the pointer */
-err_t qbuffer_destroy_free(qbuffer_t* buf);
+err_t qbuffer_destroy_inplace(qbuffer_t* buf);
 
 /* Create a reference-counted buffer ptr */
 err_t qbuffer_create(qbuffer_ptr_t* out);
+err_t qbuffer_create_type(qbuffer_ptr_t* out, qbuffer_type_t type);
+
+/* Destroy a buffer and free() the pointer;
+ * destroys a buffer created with qbuffer_create */
+err_t qbuffer_destroy_free(qbuffer_t* buf);
+
 
 /* Increment a reference count
  */
@@ -222,24 +304,33 @@ void qbuffer_extend_back(qbuffer_t* buf);
 void qbuffer_extend_front(qbuffer_t* buf);
 
 /* Append a bytes_t to a buffer group.
+ * the new buffer part will have the provided flags (specifying mutablility,
+ *  can be grown and mutated)
  */
-err_t qbuffer_append(qbuffer_t* buf, qbytes_t* bytes, int64_t skip_bytes, int64_t len_bytes);
+err_t qbuffer_append(qbuffer_t* buf, qbytes_t* bytes, int64_t skip_items, int64_t len_items, qbuffer_part_flags_t flags);
 
-/* Append a buffer to another buffer; the bytes will be shared (reference counts increased) */
-err_t qbuffer_append_buffer(qbuffer_t* buf, qbuffer_t* src, qbuffer_iter_t src_start, qbuffer_iter_t src_end);
+/* Append a buffer to another buffer; the bytes will be shared (reference counts increased)
+ * The flags of the original data will be masked with flags_mask
+ * */
+err_t qbuffer_append_buffer(qbuffer_t* buf, qbuffer_t* src, qbuffer_iter_t src_start, qbuffer_iter_t src_end, qbuffer_part_flags_t flags_mask);
 
 /* Prepend a bytes_t to a buffer group.
  */
-err_t qbuffer_prepend(qbuffer_t* buf, qbytes_t* bytes, int64_t skip_bytes, int64_t len_bytes);
+err_t qbuffer_prepend(qbuffer_t* buf, qbytes_t* bytes, int64_t skip_items, int64_t len_items, qbuffer_part_flags_t flags);
 
 /* trim functions remove parts that are completely in the area
  * to be removed. */
-void qbuffer_trim_front(qbuffer_t* buf, int64_t remove_bytes);
-void qbuffer_trim_back(qbuffer_t* buf, int64_t remove_bytes);
+void qbuffer_trim_front(qbuffer_t* buf, int64_t remove_items);
+void qbuffer_trim_back(qbuffer_t* buf, int64_t remove_items);
 
-/* Remove a part from the front or back. */
-err_t qbuffer_pop_front(qbuffer_t* buf);
-err_t qbuffer_pop_back(qbuffer_t* buf);
+/* shrink/grow functions make sure you could do O(1) push/pop */
+void qbuffer_shrink_back(qbuffer_t* buf, int64_t remove_items);
+// Add space on the right of the buffer so that buf->offset_end >= min_end
+err_t qbuffer_grow_back(qbuffer_t* buf, int64_t add_items, int round_to_chunk);
+
+/* Remove a part from the front -- disables "powers" */
+//err_t qbuffer_pop_front(qbuffer_t* buf);
+//err_t qbuffer_pop_back(qbuffer_t* buf); use qbuffer_shrink_back
 
 /* Without changing any memory, changes the offsets
  * used in the buffer (offset_start, offset_end, and offsets in the parts).
@@ -304,7 +395,7 @@ char qbuffer_iter_equals(qbuffer_iter_t start, qbuffer_iter_t end)
 /* How many bytes are in an iterator? end >= start
  */
 static inline
-int64_t qbuffer_iter_num_bytes(qbuffer_iter_t start, qbuffer_iter_t end)
+int64_t qbuffer_iter_num_items(qbuffer_iter_t start, qbuffer_iter_t end)
 {
   return end.offset - start.offset;
 }
@@ -312,7 +403,7 @@ int64_t qbuffer_iter_num_bytes(qbuffer_iter_t start, qbuffer_iter_t end)
 /* How many bytes are after an iterator?
  */
 static inline
-int64_t qbuffer_iter_num_bytes_after(qbuffer_t* buf, qbuffer_iter_t iter)
+int64_t qbuffer_iter_num_items_after(qbuffer_t* buf, qbuffer_iter_t iter)
 {
   return buf->offset_end - iter.offset;
 }
@@ -320,27 +411,50 @@ int64_t qbuffer_iter_num_bytes_after(qbuffer_t* buf, qbuffer_iter_t iter)
 /* How many bytes are before an iterator?
  */
 static inline
-int64_t qbuffer_iter_num_bytes_before(qbuffer_t* buf, qbuffer_iter_t iter)
+int64_t qbuffer_iter_num_items_before(qbuffer_t* buf, qbuffer_iter_t iter)
 {
   return iter.offset - buf->offset_start;
 }
 
-// Returns whats in the iterator. If the caller wants to hold on to
-// the bytes, it should retain them (this function does not).
 static inline
-void qbuffer_iter_get(qbuffer_iter_t iter, qbuffer_iter_t end, qbytes_t** bytes_out, int64_t* skip_out, int64_t* len_out)
+void _qbuffer_iter_get_items(qbuffer_part_t* qbp, int64_t start_offset, int64_t end_offset, qbytes_t** bytes_out, int64_t* skip_out, int64_t* len_out)
 {
-  qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), iter.iter);
-  int64_t iter_offset_within = iter.offset - (qbp->end_offset - qbp->len_bytes);
-  int64_t part_len = qbp->len_bytes - iter_offset_within;
-  int64_t len = end.offset - iter.offset;
-  
-  if( len > part_len ) len = part_len;
+  int64_t part_end = qbp->end_offset;
+  // these are amounts to add to skip (ie skip is not included)
+  int64_t part_start = part_end - qbp->len;
+  int64_t start_within = start_offset - part_start;
+  int64_t end_within = end_offset - part_start;
+
+  // do not use data before skip
+  if( start_within < 0 ) start_within = 0;
+  // do not use data after end
+  if( end_within > qbp->len ) end_within = qbp->len;
 
   *bytes_out = qbp->bytes;
-  *skip_out = qbp->skip_bytes + iter_offset_within;
-  *len_out = len;
+  *skip_out = qbp->skip + start_within;
+  *len_out = end_within - start_within;
 }
+
+// Returns whats in the iterator. If the caller wants to hold on to
+// the bytes, it should retain them (this function does not).
+// The returned values are in bytes (and not items)
+static inline
+void qbuffer_iter_get_bytes(qbuffer_t* buf, qbuffer_iter_t iter, qbuffer_iter_t end, qbytes_t** bytes_out, int64_t* skip_bytes_out, int64_t* len_bytes_out)
+{
+  int64_t skip_items, len_items;
+  qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, iter.iter);
+  _qbuffer_iter_get_items(qbp, iter.offset, end.offset, bytes_out, &skip_items, &len_items);
+  *skip_bytes_out = buf->item_size * skip_items;
+  *len_bytes_out = buf->item_size * len_items;
+}
+
+static inline
+void qbuffer_iter_get_items(qbuffer_t* buf, qbuffer_iter_t iter, qbuffer_iter_t end, qbytes_t** bytes_out, int64_t* skip_items_out, int64_t* len_items_out)
+{
+  qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, iter.iter);
+  _qbuffer_iter_get_items(qbp, iter.offset, end.offset, bytes_out, skip_items_out, len_items_out);
+}
+
 
 static inline
 int64_t qbuffer_start_offset(qbuffer_t* buf)
@@ -403,10 +517,11 @@ err_t qbuffer_memset(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end, u
 #ifdef _chplrt_H_
 
 #include "chpl-mem.h"
-#define qio_malloc(size) chpl_mem_allocMany( 1, size, CHPL_RT_MD_IO_BUFFER, __LINE__, __FILE__ )
-#define qio_calloc(nmemb, size) chpl_mem_allocManyZero( nmemb, size, CHPL_RT_MD_IO_BUFFER, __LINE__, __FILE__ )
-#define qio_realloc(ptr, size) chpl_mem_realloc(ptr, 1, size, CHPL_RT_MD_IO_BUFFER, __LINE__, __FILE__)
-#define qio_free(ptr) chpl_mem_free(ptr, __LINE__, __FILE__)
+#define qio_malloc(size) chpl_malloc(size)
+#define qio_valloc(size) chpl_valloc(size)
+#define qio_calloc(nmemb, size) chpl_calloc(nmemb, size);
+#define qio_realloc(ptr, size) chpl_realloc(ptr, size);
+#define qio_free(ptr) chpl_free(ptr)
 
 static inline char* qio_strdup(const char* ptr)
 {
@@ -418,6 +533,7 @@ static inline char* qio_strdup(const char* ptr)
 #else
 
 #define qio_malloc(size) malloc(size)
+#define qio_valloc(size) valloc(size)
 #define qio_calloc(nmemb, size) calloc(nmemb,size)
 #define qio_realloc(ptr, size) realloc(ptr, size)
 #define qio_free(ptr) free(ptr)

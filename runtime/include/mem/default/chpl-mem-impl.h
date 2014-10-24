@@ -21,6 +21,10 @@ static ___always_inline void* chpl_realloc(void* ptr, size_t size) {
   return realloc(ptr,size);
 }
 
+static ___always_inline void* chpl_valloc(size_t size) {
+  return (size) ? valloc(size) : NULL;
+}
+
 static ___always_inline void chpl_free(void* ptr) {
   free(ptr);
 }

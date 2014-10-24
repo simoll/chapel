@@ -2,156 +2,23 @@
 #include <assert.h>
 #include <stdio.h>
 
-void test_reallocate(void)
-{
-  // hit the different reallocate cases.
-  // map_size > 2* num_new_nodes
-  // add to front, add to back
-
-  {
-    // start with copy forward/copy backward.
-    deque_node_t nodes[4];
-
-    nodes[0].data = (void*) 0x100;
-    nodes[1].data = (void*) 0x101;
-    nodes[2].data = (void*) 0x102;
-    nodes[3].data = (void*) 0x103;
-
-    // test overlapping copy forward.
-    // dstBeg should be before srcBegin
-    _deque_map_copy_forward( &nodes[2], &nodes[4], &nodes[1]);
-    assert(nodes[0].data == (void*) 0x100);
-    assert(nodes[1].data == (void*) 0x102);
-    assert(nodes[2].data == (void*) 0x103);
-    assert(nodes[3].data == (void*) 0x103);
-
-
-    nodes[0].data = (void*) 0x100;
-    nodes[1].data = (void*) 0x101;
-    nodes[2].data = (void*) 0x102;
-    nodes[3].data = (void*) 0x103;
-
-
-    // test overlapping copy backward.
-    // dstEnd should be after srcEnd
-    _deque_map_copy_backward( &nodes[0], &nodes[2], &nodes[3]);
-    assert(nodes[0].data == (void*) 0x100);
-    assert(nodes[1].data == (void*) 0x100);
-    assert(nodes[2].data == (void*) 0x101);
-    assert(nodes[3].data == (void*) 0x103);
-  }
-
-  // Now, suppose we've allocated our stuff...
-  // let's reallocate.
-  {
-    deque_t d;
-    int err;
-    ssize_t saved_size;
-    deque_node_t saved_nodes[2*_DEQUE_INITIAL_MAP_SIZE];
-    deque_node_t* cur;
-    int i;
-
-    // this time, try with map_size < 2*num_new_nodes
-    err = deque_init(16, &d, 16*_DEQUE_INITIAL_MAP_SIZE);
-    assert(!err);
-
-    // save the pointers.
-    assert(d.map_size < 2*_DEQUE_INITIAL_MAP_SIZE);// fits in test buffer
-    saved_size = 0;
-    for( cur = d.start.node; cur < d.finish.node; ++cur ) {
-      saved_nodes[saved_size++].data = cur->data;
-    }
-
-    _deque_reallocate_map(16, 512, /* first two args dont matter in this test*/
-                          &d, 1, 0 /* not at front */);
-    assert(d.map_size > saved_size); // make sure it grew
-    i = 0;
-    for( cur = d.start.node; cur < d.finish.node && i < saved_size; ++cur ) {
-      assert(saved_nodes[i++].data == cur->data);
-    } 
-    // don't care value of nodes[saved_size], the new slot.
-
-    deque_destroy(&d);
-
-    err = deque_init(16, &d, 16*_DEQUE_INITIAL_MAP_SIZE);
-    assert(!err);
-
-    assert(d.map_size < 2*_DEQUE_INITIAL_MAP_SIZE);// fits in test buffer
-    saved_size = 0;
-    for( cur = d.start.node; cur < d.finish.node; ++cur ) {
-      saved_nodes[saved_size++].data = cur->data;
-    }
-
-    _deque_reallocate_map(16, 512, /* first two args dont matter in this test*/
-                          &d, 1, 1 /* at front */);
-    assert(d.map_size > saved_size); // make sure it grew
-    // don't care value of nodes[0], the new slot.
-    i = 0;
-    for( cur = d.start.node; cur < d.finish.node && i < saved_size ; ++cur ) {
-      assert(saved_nodes[i++].data == cur->data);
-    } 
-    // don't care of value of nodes[saved_size+1], the previous new slot.
-
-    deque_destroy(&d);
-
-    // this time, try with map_size > 2*num_new_nodes
-    err = deque_init(16, &d, 0);
-    assert(!err);
-
-    // save the pointers.
-    assert(d.map_size < 2*_DEQUE_INITIAL_MAP_SIZE);// fits in test buffer
-    saved_size = 0;
-    for( cur = d.start.node; cur < d.finish.node; ++cur ) {
-      saved_nodes[saved_size++].data = cur->data;
-    }
-
-    _deque_reallocate_map(16, 512, /* first two args dont matter in this test*/
-                          &d, 1, 0 /* not at front */);
-    i = 0;
-    for( cur = d.start.node; cur < d.finish.node; ++cur ) {
-      assert(saved_nodes[i++].data == cur->data);
-    }
-    assert( i == saved_size );
-
-    deque_destroy(&d);
-
-    err = deque_init(16, &d, 0);
-    assert(!err);
-
-    // save the pointers.
-    assert(d.map_size < 2*_DEQUE_INITIAL_MAP_SIZE);// fits in test buffer
-    saved_size = 0;
-    for( cur = d.start.node; cur < d.finish.node; ++cur ) {
-      saved_nodes[saved_size++].data = cur->data;
-    }
-
-    _deque_reallocate_map(16, 512, /* first two args dont matter in this test*/
-                          &d, 1, 1 /* at front */);
-    i = 0;
-    for( cur = d.start.node; cur < d.finish.node; ++cur ) {
-      assert(saved_nodes[i++].data == cur->data);
-    }
-    assert( i == saved_size );
-
-    deque_destroy(&d);
-  }
-}
-
 void print_deque(size_t item_size, deque_t* d)
 {
   deque_iterator_t cur = deque_begin(d);
   deque_iterator_t end = deque_end(d);
   int j;
   assert(item_size == 4);
-  printf("deque %p: ", d);
+  printf("deque %p: d=%p log2=%i s=%li e=%li :: ",
+         d, d->data, (int) d->log2_capacity, (long) d->start, (long) d->end);
   while( ! deque_it_equals(cur, end) ) {
     j = 0;
-    deque_it_get_cur(item_size, cur, &j);
+    deque_it_get_cur(item_size, d, cur, &j);
     printf(" %i", j);
     deque_it_forward_one(item_size, &cur);
   }
   printf("\n");
 }
+
 void iterate_counting(size_t item_size, deque_t* d, int num)
 {
   deque_iterator_t begin = deque_begin(d);
@@ -163,7 +30,7 @@ void iterate_counting(size_t item_size, deque_t* d, int num)
   assert(item_size == 4);
   while( i < num && ! deque_it_equals(cur, end) ) {
     // check that the value is right.
-    deque_it_get_cur(item_size, cur, &j);
+    deque_it_get_cur(item_size, d, cur, &j);
     assert( j == i );
     
     // check that advancing from beginning i elements takes us here.
@@ -180,6 +47,78 @@ void iterate_counting(size_t item_size, deque_t* d, int num)
     i++;
   }
 }
+
+void check_realloc(int64_t skipping, int nelems, int from_capacity, int to_capacity)
+{
+  err_t err;
+  deque_t d;
+
+  //printf("check_realloc skip=%li nelems=%i fromcap=%i tocap=%i\n", (long) skipping, nelems, from_capacity, to_capacity);
+
+  assert( nelems <= from_capacity );
+  assert( nelems <= to_capacity );
+
+  err = deque_init(4, &d, from_capacity);
+  assert(!err);
+  d.start = skipping;
+  d.end = skipping;
+
+  // Fill up our deque with the data...
+  {
+    int i;
+    for( i = 0; i < nelems; i++ ) {
+      deque_push_back(4, &d, &i);
+    }
+  }
+  assert( deque_size(4, &d) == nelems );
+
+  // Now read the data in the deque, check it is right.
+  iterate_counting(4, &d, nelems);
+
+  //printf("Before realloc\n");
+  //print_deque(4, &d);
+
+  // Now do a reallocation
+  err = _deque_realloc(4, &d, to_capacity);
+  assert(!err);
+ 
+  //printf("After realloc\n");
+  //print_deque(4, &d);
+
+  // Now read the data in the deque, check it is right.
+  iterate_counting(4, &d, nelems);
+
+  deque_destroy(&d);
+}
+
+void test_reallocate(void)
+{
+  // hit the different reallocate cases.
+  int64_t skip;
+  int nelems;
+  int ncaps = 10;
+  int x,y;
+  
+  check_realloc(1, 8, 8, 8);
+  check_realloc(0, 3, 3, 3);
+
+  for( skip = 0; skip < 32; skip++ ) {
+    for( nelems = 0; nelems < 32; nelems++ ) {
+      for( x = 0; x < ncaps; x++ ) {
+        for( y = 0; y < ncaps; y++ ) {
+          int usex, usey;
+          usex = 1 << x;
+          usey = 1 << y;
+          if( usex < nelems ) usex = nelems;
+          if( usey < nelems ) usey = nelems;
+          check_realloc(skip, nelems, usex, usey);
+        }
+      }
+    }
+  }
+}
+
+
 void iterate_counting_reverse(size_t item_size, deque_t* d, int num)
 {
   deque_iterator_t cur;
@@ -198,7 +137,7 @@ void iterate_counting_reverse(size_t item_size, deque_t* d, int num)
   cur = last;
   do {
     // check that the value is right.
-    deque_it_get_cur(item_size, cur, &j);
+    deque_it_get_cur(item_size, d, cur, &j);
     assert( j == i );
 
     // check that advancing from end -i elements takes us here.
@@ -252,7 +191,7 @@ void pop_back_check_constant(size_t item_size, deque_t* d, int num, int val)
   for( i = 0; i < num; i++ ) {
     assert(deque_size(item_size, d) > 0);
     j = 0;
-    deque_it_get_cur(4, deque_last(item_size, d), &j);
+    deque_it_get_cur(4, d, deque_last(item_size, d), &j);
     assert( j == val );
     deque_pop_back(4, d);
   }
@@ -269,7 +208,7 @@ void pop_front_check_constant(size_t item_size, deque_t* d, int num, int val)
   for( i = 0; i < num; i++ ) {
     assert(deque_size(item_size, d) > 0);
     j = 0;
-    deque_it_get_cur(4, deque_begin(d), &j);
+    deque_it_get_cur(4, d, deque_begin(d), &j);
     assert( j == val );
     deque_pop_front(4, d);
   }
@@ -285,7 +224,7 @@ void pop_front_check_counting(size_t item_size, deque_t* d, int num)
   for( i = 0; i < num; i++ ) {
     assert(deque_size(item_size, d) > 0);
     j = 0;
-    deque_it_get_cur(4, deque_begin(d), &j);
+    deque_it_get_cur(4, d, deque_begin(d), &j);
     assert( j == i );
     deque_pop_front(4, d);
   }
@@ -301,7 +240,7 @@ void pop_front_check_counting_reverse(size_t item_size, deque_t* d, int num)
   for( i = num - 1; i >= 0; i-- ) {
     assert(deque_size(item_size, d) > 0);
     j = 0;
-    deque_it_get_cur(4, deque_begin(d), &j);
+    deque_it_get_cur(4, d, deque_begin(d), &j);
     assert( j == i );
     deque_pop_front(4, d);
   }
@@ -317,7 +256,7 @@ void pop_back_check_counting(size_t item_size, deque_t* d, int num)
   for( i = 0; i < num; i++ ) {
     assert(deque_size(item_size, d) > 0);
     j = 0;
-    deque_it_get_cur(4, deque_last(item_size, d), &j);
+    deque_it_get_cur(4, d, deque_last(item_size, d), &j);
     //printf("Got %i\n", j);
     assert( j == i );
     deque_pop_back(4, d);
@@ -334,7 +273,7 @@ void pop_back_check_counting_reverse(size_t item_size, deque_t* d, int num)
   for( i = num - 1; i >= 0; i-- ) {
     assert(deque_size(item_size, d) > 0);
     j = 0;
-    deque_it_get_cur(4, deque_last(item_size, d), &j);
+    deque_it_get_cur(4, d, deque_last(item_size, d), &j);
     assert( j == i );
     deque_pop_back(4, d);
   }
@@ -352,6 +291,8 @@ int lots = 1 << 15;
 void test_deque(int lots)
 {
   deque_t d;
+  int i;
+  int zero = 0;
   // test: space for zeros.
   deque_init(4, &d, 0);
   check_empty(4, &d);
@@ -359,11 +300,13 @@ void test_deque(int lots)
 
   // test: space for zeros.
   deque_init(4, &d, 10);
+  for( i = 0; i < 10; i++ ) deque_push_front(4, &d, &zero);
   pop_back_check_constant(4, &d, 10, 0);
   check_empty(4, &d);
   deque_destroy(&d);
   // test: space for zeros.
   deque_init(4, &d, 10);
+  for( i = 0; i < 10; i++ ) deque_push_back(4, &d, &zero);
   pop_front_check_constant(4, &d, 10, 0);
   check_empty(4, &d);
   deque_destroy(&d);

@@ -501,6 +501,20 @@ err_t qio_file_length(qio_file_t* f, int64_t *len_out);
  *  to specify the region in which it's easy to read/write
  *  a chunk. The channel offset is computed as
  *  (cached_cur - cached_start) + cached_start_pos
+ *
+ * Note that it is possible to have zero-copy writes of
+ * qbytes into a channel. When that happens, we need some
+ * strategy to avoid a writing channel writing to a read-only qbytes,
+ * or for a read-only qbytes ending up in a MEMORY file to which
+ * another channel will attempt to write:
+ *  1) we could copy a read-only qbytes at the time it is written.
+ *     That would mean that it's more efficient to use
+ *     destructive writes of strings.
+ *  2) we could require the channel to copy-on-write
+ *     when it gets a buffer part that is marked read-only
+ *     (complicated because of MMAP/MEMORY buffers)
+ *
+ *  We opt for (1) since it is simpler for the library to implement.
  */
 #define MARK_INITIAL_STACK_SZ 4
 

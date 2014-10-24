@@ -5,59 +5,78 @@
 
 #include "deque.h"
 
+
+#define _DEQUE_MIN(a,b) (a<b?a:b)
+
+static inline
+int64_t _deque_posmin2(int64_t a, int64_t b)
+{
+  if( a > 0 && b > 0 ) return _DEQUE_MIN(a,b);
+  if( a <= 0 && b <= 0 ) return 0;
+  if( a > 0 ) return a;
+  if( b > 0 ) return b;
+  return 0;
+}
+
+static inline
+int64_t _deque_posmin3(int64_t a, int64_t b, int64_t c)
+{
+  return _deque_posmin2( _deque_posmin2(a,b), c );
+}
+
 void debug_print_deque_iter(deque_iterator_t* it)
 {
-  fprintf(stderr, "deque_it %p: %p %p %p %p\n", it, it->cur, it->first, it->last, it->node);
+  fprintf(stderr, "deque_it: %li\n", (long) it->cur);
 }
 
-void _deque_map_copy_forward(deque_node_t* start, deque_node_t* end, deque_node_t* dst)
+// It's important that deque_realloc not deallocate the existing
+// data in case there is an error; that way shrinking can always
+// avoid returning an error (since the error can be ignored).
+err_t _deque_realloc(const ssize_t item_size, deque_t* d, int64_t min_capacity)
 {
-  deque_node_t* cur;
-  for( cur = start; cur < end; ++cur ) {
-    *dst = *cur;
-    dst++;
+  int64_t new_log2_capacity = _deque_log2_capacity_for(min_capacity);
+  int64_t one = 1;
+  int64_t new_capacity = one << new_log2_capacity;
+  int64_t old_capacity = one << d->log2_capacity;
+  void* new_data;
+  int64_t old_end_capacity;
+  int64_t new_end_capacity;
+  int64_t copied;
+  int64_t to_copy;
+  int64_t src_off;
+  int64_t dst_off;
+  int64_t need;
+
+  new_data = deque_calloc(new_capacity, item_size);
+  if( ! new_data ) return ENOMEM;
+
+  old_end_capacity = old_capacity +
+                     d->start - _deque_get_offset(d->log2_capacity, d->start);
+  new_end_capacity = new_capacity +
+                     d->start - _deque_get_offset(new_log2_capacity, d->start);
+
+  // Generally, we have to do this copy in 4 parts.
+  copied = 0;
+  need = d->end - d->start;
+  while( copied < need ) {
+    to_copy = _deque_posmin3(d->end - (d->start + copied),
+                             old_end_capacity - (d->start + copied),
+                             new_end_capacity - (d->start + copied));
+
+    src_off = _deque_get_byte_offset(item_size, d->log2_capacity, d->start+copied);
+    dst_off = _deque_get_byte_offset(item_size, new_log2_capacity, d->start+copied);
+    memcpy(PTR_ADDBYTES(new_data, dst_off),
+           PTR_ADDBYTES(d->data, src_off),
+           to_copy * item_size);
+
+    copied += to_copy;
   }
-}
-void _deque_map_copy_backward(deque_node_t* start, deque_node_t* end, deque_node_t* dst_end)
-{
-  deque_node_t* cur;
-  for( cur = end - 1; cur >= start; --cur ) {
-    dst_end--;
-    *dst_end = *cur;
-  }
-}
 
+  deque_free(d->data);
+  d->data = new_data;
+  d->log2_capacity = new_log2_capacity;
+  // leave start, end alone.
 
-err_t _deque_reallocate_map(const ssize_t item_size, const ssize_t buf_size, deque_t* d, ssize_t nodes_to_add, char add_at_front) {
-  const ssize_t old_num_nodes = d->finish.node - d->start.node + 1;
-  const ssize_t new_num_nodes = old_num_nodes + nodes_to_add;
-
-  deque_node_t* new_nstart; 
-
-  if( d->map_size > 2 * new_num_nodes ) {
-    new_nstart = d->map + (d->map_size - new_num_nodes) / 2 + (add_at_front ? nodes_to_add : 0 );
-    if( new_nstart < d->start.node ) {
-      // copy from d->start.node to d->finish.node + 1 to new_nstart
-      _deque_map_copy_forward(d->start.node, d->finish.node + 1, new_nstart);
-    } else {
-      // copy backward from d->start.node to d->finish.node + 1 to new_nstart + old_num_nodes elements
-      _deque_map_copy_backward(d->start.node, d->finish.node + 1, new_nstart + old_num_nodes);
-    }
-  } else {
-    ssize_t new_map_size = d->map_size + _DEQUE_MAX(d->map_size, nodes_to_add) + 2;
-    deque_node_t* new_map = deque_calloc(new_map_size, sizeof(deque_node_t));
-    if( ! new_map ) return ENOMEM;
-
-    new_nstart = new_map + (new_map_size - new_num_nodes ) / 2 + (add_at_front ? nodes_to_add : 0 );
-    // copy from d->start.node to d->finish.node + 1 to new_nstart 
-    _deque_map_copy_forward(d->start.node, d->finish.node + 1, new_nstart);
-    deque_free(d->map);
-
-    d->map = new_map;
-    d->map_size = new_map_size;
-  }
-  _deque_set_node(item_size, buf_size, & d->start, new_nstart);
-  _deque_set_node(item_size, buf_size, & d->finish, new_nstart + old_num_nodes - 1);
   return 0;
 }
 

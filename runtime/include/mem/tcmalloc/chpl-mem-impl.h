@@ -14,6 +14,10 @@ static ___always_inline void* chpl_realloc(void* ptr, size_t size) {
   return tc_realloc(ptr, size);
 }
 
+static ___always_inline void* chpl_valloc(size_t size) {
+  return tc_valloc(size);
+}
+
 static ___always_inline void chpl_free(void* ptr) {
   tc_free(ptr);
 }

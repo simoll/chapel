@@ -2,6 +2,9 @@
 
 #ifndef SIMPLE_TEST
 #include "chplrt.h"
+#define QBUF_EXTRA_CHECKS 0
+#else
+#define QBUF_EXTRA_CHECKS 1
 #endif
 
 #include "qbuffer.h"
@@ -13,17 +16,37 @@
 
 #include <assert.h>
 
-// 64kb blocks... note tile64 page size is 64K
+#ifdef _chplrt_H_
+// we use bit-ops defined here, like chpl_leadz8
+#include "chplmath.h"
+#define qio_leadz64 chpl_leadz64
+#else
+#define qio_leadz64(x) (__builtin_clzll((unsigned long long) (x)))
+#endif
+
+#define qio_log2_64(x) (63 - qio_leadz64(x))
+
+// an iobuf ought to be page aligned.
+//  - tile64 page size is 64kb
+//  - glibc malloc uses MMAP for anything over 128kb by default
+//  - 64kb blocks... note tile64 page size is 64K
 // this really should be a multiple of page size...
 // but we can't know page size at compile time
-size_t qbytes_iobuf_size = 64*1024;
+size_t qbytes_iobuf_size = 128*1024;
+
+// what is smallest buffer? should cover overhead of qbuffer
+// in space.
+size_t qbytes_smallbuf_size = 256;
 
 // prototypes.
 
+err_t _qbytes_create_iobuf_sz(qbytes_t** out, int64_t size);
 void qbytes_free_iobuf(qbytes_t* b);
 void debug_print_bytes(qbytes_t* b);
-err_t qbuffer_init_part(qbuffer_part_t* p, qbytes_t* bytes, int64_t skip_bytes, int64_t len_bytes, int64_t end_offset);
+void _qbuffer_trim_back(qbuffer_t* buf, int64_t remove_items, int shrinking);
 
+int64_t _qbuffer_get_block(qbuffer_t* buf, int64_t offset, int* block_bits_out);
+int _qbuffer_log2_next(int64_t size, int min_log2);
 
 // global, shared pools.
 
@@ -73,9 +96,9 @@ void qbytes_free_iobuf(qbytes_t* b) {
 
 void debug_print_bytes(qbytes_t* b)
 {
-  fprintf(stderr, "bytes %p: data=%p len=%lli ref_cnt=%li free_function=%p flags=%i\n",
+  fprintf(stderr, "bytes %p: data=%p len=%lli ref_cnt=%li free_function=%p\n",
           b, b->data, (long long int) b->len, (long int) DO_GET_REFCNT(b),
-          b->free_function, b->flags);
+          b->free_function);
 }
 
 void _qbytes_init_generic(qbytes_t* ret, void* give_data, int64_t len, qbytes_free_t free_function)
@@ -83,7 +106,6 @@ void _qbytes_init_generic(qbytes_t* ret, void* give_data, int64_t len, qbytes_fr
   ret->data = give_data;
   ret->len = len;
   DO_INIT_REFCNT(ret);
-  ret->flags = 0;
   ret->free_function = free_function;
 }
 
@@ -91,7 +113,7 @@ err_t qbytes_create_generic(qbytes_t** out, void* give_data, int64_t len, qbytes
 {
   qbytes_t* ret = NULL;
 
-  ret = qio_calloc(1, sizeof(qbytes_t));
+  ret = qio_malloc(sizeof(qbytes_t));
   if( ! ret ) return ENOMEM;
 
   _qbytes_init_generic(ret, give_data, len, free_function);
@@ -101,35 +123,35 @@ err_t qbytes_create_generic(qbytes_t** out, void* give_data, int64_t len, qbytes
   return 0;
 }
 
-err_t _qbytes_init_iobuf(qbytes_t* ret)
+err_t _qbytes_init_iobuf(qbytes_t* ret, int64_t size)
 {
   void* data = NULL;
   
   // allocate 4K-aligned (or page size aligned)
   // multiple of 4K
-  data = valloc(qbytes_iobuf_size);
+  data = qio_valloc(size);
   if( !data ) return ENOMEM;
   // We used to use posix_memalign, but that didn't work on an old Mac;
   // also, this should be page-aligned (vs iobuf_size aligned).
   //err_t err = posix_memalign(&data, qbytes_iobuf_size, qbytes_iobuf_size);
   //if( err ) return err;
-  memset(data, 0, qbytes_iobuf_size);
 
-  _qbytes_init_generic(ret, data, qbytes_iobuf_size, qbytes_free_iobuf);
+  _qbytes_init_generic(ret, data, size, qbytes_free_iobuf);
 
   return 0;
 }
 
 
-err_t qbytes_create_iobuf(qbytes_t** out)
+
+err_t _qbytes_create_iobuf_sz(qbytes_t** out, int64_t size)
 {
   qbytes_t* ret = NULL;
   err_t err;
 
-  ret = qio_calloc(1, sizeof(qbytes_t));
+  ret = qio_malloc(sizeof(qbytes_t));
   if( ! ret ) return ENOMEM;
 
-  err = _qbytes_init_iobuf(ret);
+  err = _qbytes_init_iobuf(ret, size);
   if( err ) {
     qio_free(ret);
     *out = NULL;
@@ -139,21 +161,10 @@ err_t qbytes_create_iobuf(qbytes_t** out)
   *out = ret;
   return 0;
 }
-
-/*
-err_t _qbytes_init_calloc(qbytes_t* ret, int64_t len)
+err_t qbytes_create_iobuf(qbytes_t** out)
 {
-  void* data;
-
-  data = qio_calloc(1,len);
-  if( data == NULL ) {
-    return ENOMEM;
-  }
-
-  _qbytes_init_generic(ret, data, len, qbytes_free_free);
-
-  return 0;
-}*/
+  return _qbytes_create_iobuf_sz(out, qbytes_iobuf_size);
+}
 
 err_t qbytes_create_calloc(qbytes_t** out, int64_t len)
 {
@@ -170,47 +181,29 @@ err_t qbytes_create_calloc(qbytes_t** out, int64_t len)
   return 0;
 }
 
-/*
-static inline int leadz64(uint64_t i)
+err_t qbytes_create_malloc(qbytes_t** out, int64_t len)
 {
-  return __builtin_clzll(i);
+  qbytes_t* ret = NULL;
+  void* data;
+
+  ret = qio_malloc(sizeof(qbytes_t) + len);
+  if( ! ret ) return ENOMEM;
+
+  data = ret + 1; // ie ret + sizeof(qbytes_t)
+  _qbytes_init_generic(ret, data, len, qbytes_free_null);
+
+  *out = ret;
+  return 0;
 }
 
-static inline int log2lli(uint64_t i)
+
+err_t qbytes_create_buffer(qbytes_t** out, int64_t len)
 {
-  return 63 - leadz64(i);
-}
-
-int qbytes_append_realloc(qbytes_t* qb, size_t item_size, void* item)
-{
-   int64_t one = 1;
-   int64_t exp;
-   int64_t len = qb->len;
-   void* a = qb->data;
-
-   if( item_size == 0 ) return 0;
-   if( 0 == len ) exp = 0;
-   else exp = one << log2lli(len);
-   if( len == exp ) {
-      // the array is full - double its size.
-      if( exp == 0 ) exp = 1;
-      while( len + item_size > exp ) exp = 2*exp; 
-
-      a = (unsigned char*) realloc(a, exp);
-      if( !a ) return ENOMEM;
-      qb->data = a;
-   }
-   // now put the new value in.
-   memcpy(a + len, item, item_size);
-   qb->len += item_size; // increment the item size.
-
-   return 0;
-}
-*/
-
-static inline
-void qbuffer_clear_cached(qbuffer_t* buf)
-{
+  if( len < qbytes_iobuf_size ) {
+    return qbytes_create_malloc(out, len);
+  } else {
+    return _qbytes_create_iobuf_sz(out, len);
+  }
 }
 
 void debug_print_qbuffer_iter(qbuffer_iter_t* iter)
@@ -232,42 +225,46 @@ void debug_print_qbuffer(qbuffer_t* buf)
   debug_print_deque_iter(&end);
 
   while( ! deque_it_equals(cur, end) ) {
-    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr( sizeof(qbuffer_part_t), cur);
-    fprintf(stderr, "part %p: bytes=%p (data %p) skip=%lli len=%lli end=%lli\n", 
-            qbp, qbp->bytes, qbp->bytes->data,
-            (long long int) qbp->skip_bytes,
-            (long long int) qbp->len_bytes,
+    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr( sizeof(qbuffer_part_t), &buf->deque, cur);
+    fprintf(stderr, "part %p: bytes=%p (data %p len %lli) skip=%lli len=%lli end=%lli\n", 
+            qbp, qbp->bytes, qbp->bytes->data, (long long int) qbp->bytes->len,
+            (long long int) qbp->skip,
+            (long long int) qbp->len,
             (long long int) qbp->end_offset);
 
     deque_it_forward_one( sizeof(qbuffer_part_t), &cur );
   }
 }
 
-err_t qbuffer_init(qbuffer_t* buf)
+err_t qbuffer_init_type(qbuffer_t* buf, qbuffer_type_t type)
 {
   memset(buf, 0, sizeof(qbuffer_t));
+  buf->item_size = 1;
+  buf->type = type;
   DO_INIT_REFCNT(buf);
   return deque_init(sizeof(qbuffer_part_t), & buf->deque, 0);
   //return 0;
 }
 
-err_t qbuffer_destroy(qbuffer_t* buf)
+err_t qbuffer_init(qbuffer_t* buf)
+{
+  return qbuffer_init_type(buf, QB_OTHER);
+}
+
+err_t qbuffer_destroy_inplace(qbuffer_t* buf)
 {
   err_t err = 0;
   deque_iterator_t cur = deque_begin(& buf->deque);
   deque_iterator_t end = deque_end(& buf->deque);
 
   while( ! deque_it_equals(cur, end) ) {
-    qbuffer_part_t* qbp = deque_it_get_cur_ptr(sizeof(qbuffer_part_t), cur);
+    qbuffer_part_t* qbp = deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, cur);
 
     // release the qbuffer.
     qbytes_release(qbp->bytes);
 
     deque_it_forward_one(sizeof(qbuffer_part_t), &cur);
   }
-
-  // remove any cached data
-  qbuffer_clear_cached(buf);
 
   // destroy the deque
   deque_destroy(& buf->deque);
@@ -277,7 +274,7 @@ err_t qbuffer_destroy(qbuffer_t* buf)
   return err;
 }
 
-err_t qbuffer_create(qbuffer_t** out)
+err_t qbuffer_create_type(qbuffer_t** out, qbuffer_type_t type)
 {
   qbuffer_t* ret = NULL;
   err_t err;
@@ -285,7 +282,7 @@ err_t qbuffer_create(qbuffer_t** out)
   ret = qio_malloc(sizeof(qbuffer_t));
   if( ! ret ) return ENOMEM;
 
-  err = qbuffer_init(ret);
+  err = qbuffer_init_type(ret, type);
   if( err ) {
     qio_free(ret);
     return err;
@@ -296,70 +293,50 @@ err_t qbuffer_create(qbuffer_t** out)
   return 0;
 }
 
+err_t qbuffer_create(qbuffer_t** out)
+{
+  return qbuffer_create_type(out, QB_OTHER);
+}
+
 err_t qbuffer_destroy_free(qbuffer_t* buf)
 {
   err_t err;
-  err = qbuffer_destroy(buf);
+  err = qbuffer_destroy_inplace(buf);
   qio_free(buf);
   return err;
 }
 
-err_t qbuffer_init_part(qbuffer_part_t* p, qbytes_t* bytes, int64_t skip_bytes, int64_t len_bytes, int64_t end_offset)
+// skip, len, end are in items.
+static
+err_t _qbuffer_init_part(qbuffer_part_t* p, qbytes_t* bytes, int64_t skip, int64_t len, int64_t end_offset, qbuffer_part_flags_t flags, int64_t itemsz)
 {
-  if( len_bytes < 0 || skip_bytes < 0 ) return EINVAL;
-
-  if( skip_bytes + len_bytes > bytes->len ) return EINVAL;
+  if( len < 0 || skip < 0 ) return EINVAL;
+  if( itemsz*(skip + len) < 0 ) return EINVAL;
+  if( itemsz*(skip + len) > bytes->len ) return EINVAL;
 
   qbytes_retain(bytes);
 
   p->bytes = bytes;
-  p->skip_bytes = skip_bytes;
-  p->len_bytes = len_bytes;
+  p->skip = skip;
+  p->len = len;
   p->end_offset = end_offset;
-
-  p->flags = QB_PART_FLAGS_NONE;
-  if( skip_bytes == 0 && len_bytes == bytes->len ) p->flags = QB_PART_FLAGS_EXTENDABLE_TO_ENTIRE_BYTES;
+  p->flags = flags;
+  p->end_offset_characters = INT64_MIN;
 
   return 0;
 }
 
-void qbuffer_extend_back(qbuffer_t* buf)
-{
-  if( deque_size(sizeof(qbuffer_part_t), &buf->deque) > 0 ) {
-    // Get the last part.
-    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr( sizeof(qbuffer_part_t), deque_last(sizeof(qbuffer_part_t), &buf->deque));
-    if( (qbp->flags & QB_PART_FLAGS_EXTENDABLE_TO_ENTIRE_BYTES) &&
-        qbp->len_bytes < qbp->bytes->len ) {
-      qbp->end_offset = (qbp->end_offset - qbp->len_bytes) + qbp->bytes->len;
-      qbp->len_bytes = qbp->bytes->len;
-      buf->offset_end = qbp->end_offset;
-    }
-  }
-}
-
-void qbuffer_extend_front(qbuffer_t* buf)
-{
-  if( deque_size(sizeof(qbuffer_part_t), &buf->deque) > 0 ) {
-    // Get the first part.
-    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr( sizeof(qbuffer_part_t), deque_begin(& buf->deque));
-    if( (qbp->flags & QB_PART_FLAGS_EXTENDABLE_TO_ENTIRE_BYTES) &&
-        qbp->skip_bytes > 0 ) {
-      qbp->len_bytes = qbp->bytes->len;
-      qbp->skip_bytes = 0;
-      buf->offset_start = qbp->end_offset - qbp->len_bytes;
-    }
-  }
-}
-
-err_t qbuffer_append(qbuffer_t* buf, qbytes_t* bytes, int64_t skip_bytes, int64_t len_bytes)
+// does not change "powers" or "even" method
+static
+err_t _qbuffer_append_internal(qbuffer_t* buf, qbytes_t* bytes, int64_t skip_items, int64_t len_items, qbuffer_part_flags_t flags)
 {
   qbuffer_part_t part;
   int64_t new_end;
   err_t err;
 
-  new_end = buf->offset_end + len_bytes;
+  new_end = buf->offset_end + len_items;
   // init part retains the bytes.
-  err = qbuffer_init_part(&part, bytes, skip_bytes, len_bytes, new_end);
+  err = _qbuffer_init_part(&part, bytes, skip_items, len_items, new_end, flags, buf->item_size);
   if( err ) return err;
 
   err = deque_push_back(sizeof(qbuffer_part_t), &buf->deque, &part);
@@ -368,15 +345,357 @@ err_t qbuffer_append(qbuffer_t* buf, qbytes_t* bytes, int64_t skip_bytes, int64_
     return err;
   }
 
+  // update the buffer's end
   buf->offset_end = new_end;
-
-  // invalidate cached entries.
-  qbuffer_clear_cached(buf);
 
   return 0;
 }
 
-err_t qbuffer_append_buffer(qbuffer_t* buf, qbuffer_t* src, qbuffer_iter_t src_start, qbuffer_iter_t src_end)
+static inline
+int _is_powers(qbuffer_t* buf)
+{
+  return buf->type == QB_POWERS;
+}
+
+static inline
+int _is_even(qbuffer_t* buf)
+{
+  return buf->type == QB_EVEN;
+}
+static inline
+int _is_other(qbuffer_t* buf)
+{
+  return buf->type == QB_OTHER;
+}
+
+
+static inline
+void _make_other(qbuffer_t* buf)
+{
+  buf->type = QB_OTHER;
+  buf->log2_items_starting = 0;
+}
+
+// returns a block index
+static inline
+int64_t _powers_get_block(int log2_items_starting, int64_t offset, int* block_bits_out)
+{
+  // "powers" type
+  uint64_t norm_offset;
+  int block_bits;
+  int log_blocks_per_superblock;
+  int superblock;
+  int block_in_superblock;
+  //uint64_t offset_in_block;
+  uint64_t blocks_before_superblock;
+  uint64_t one = 1;
+  int64_t block_index;
+  uint64_t zero_odd_one_even;
+
+  if( QBUF_EXTRA_CHECKS ) assert(offset >= 0);
+
+  // Otherwise, how far do we need to jump ahead?
+  norm_offset = offset;
+  norm_offset >>= log2_items_starting;
+  if( norm_offset > 0 ) {
+    superblock = 64 - qio_leadz64(norm_offset);
+    block_bits = superblock >> 1; // ie floor(s/2)
+    log_blocks_per_superblock = (superblock - 1) >> 1; // ie floor((s-1)/2)
+    block_in_superblock = (norm_offset ^ (one << (superblock-1))) >> block_bits;
+    //offset_in_block = norm_offset & ( (one << block_bits) - one);
+    //
+    zero_odd_one_even = (one ^ (superblock & 1));
+    blocks_before_superblock =
+      (one << (log_blocks_per_superblock + 1)) +
+      (zero_odd_one_even << log_blocks_per_superblock) - 1;
+    block_index = blocks_before_superblock + block_in_superblock;
+  } else {
+    block_index = 0;
+    block_bits = 0;
+    //offset_in_block = 0;
+  }
+
+  block_bits += log2_items_starting;
+
+  if( block_bits_out ) *block_bits_out = block_bits;
+  return block_index;
+}
+
+
+static inline
+int64_t _even_get_block(int log2_items_starting, int64_t offset, int* block_bits_out)
+{
+  if( block_bits_out ) *block_bits_out = log2_items_starting;
+  return offset >> log2_items_starting;
+}
+
+int64_t _qbuffer_get_block(qbuffer_t* buf, int64_t offset, int* block_bits_out) {
+  if( _is_powers(buf) ) {
+    return _powers_get_block(buf->log2_items_starting, offset, block_bits_out);
+  }
+  if( _is_even(buf) ) {
+    return _even_get_block(buf->log2_items_starting, offset, block_bits_out);
+  }
+  *block_bits_out = 0;
+  return 0;
+}
+
+// returns log2 such than
+// (1 << log2) > 3*size/2
+int _qbuffer_log2_next(int64_t size, int min_log2)
+{
+  int64_t one = 1;
+  int log2;
+
+  if( size == 0 ) size = 1;
+
+  log2 = qio_log2_64(size);
+
+  if( (one << log2) < size ) {
+    // round up.
+    log2++;
+
+    // if e.g. qbp->len = 2^x - 1,
+    // we want to grow directly to the
+    // next power-of-two without allocating just 1 item.
+    if( (one << log2) - size < qbytes_smallbuf_size ) {
+      // round up again.
+      log2++;
+    }
+  }
+
+  if( log2 < min_log2 ) log2 = min_log2;
+
+  return log2;
+}
+
+static inline
+int64_t _blocks_for_size(int64_t item_size, int64_t buf_size)
+{
+  int64_t blocksz;
+  // compute a block size of qbytes_iobuf_size or 1 item
+  if( item_size < buf_size ) {
+    blocksz = buf_size / item_size;
+  } else {
+    blocksz = 1;
+  }
+  return blocksz;
+}
+
+// If we were to prepend a block and keep the existing pattern,
+// what size would it be?
+// Returns false if it would break the pattern (ie first block not full,
+// or first block is currently a split block).
+// Assumes that extending the existing block is not going to work.
+static
+int _would_grow_front(qbuffer_t* buf, int64_t *expect_size, int8_t* new_log2_items_starting)
+{
+  int64_t one = 1;
+
+  *expect_size = 0;
+  *new_log2_items_starting = 0;
+
+  if( _is_other(buf) ) {
+    return 0;
+  }
+
+  if( deque_size(sizeof(qbuffer_part_t), &buf->deque) == 0 ) {
+    return 0;
+  }
+
+  // if there is only one block and it ends on a power-of-two
+  // then we can add a block before it to make the total
+  // size a power-of-two
+  if( deque_size(sizeof(qbuffer_part_t), &buf->deque) == 1 ) {
+    int log2;
+    qbuffer_part_t* qbp;
+   
+    qbp = (qbuffer_part_t*) deque_it_get_cur_ptr( sizeof(qbuffer_part_t), &buf->deque, deque_begin(& buf->deque));
+    log2 = _qbuffer_log2_next(qbp->len, buf->log2_items_starting);
+    // is the end of qbp aligned to log2?
+    if( (qbp->end_offset & ((one << log2) - 1)) == 0 ) {
+      // OK, then we would round qbp->len to log2,
+      // but it might be there already... if it is, fall through
+      // to other cases
+      if( qbp->len < (one << log2) ) {
+        // add a block of size (one << log2) - qbp->len
+        *expect_size = (one << log2) - qbp->len;
+        *new_log2_items_starting = log2;
+        return 1;
+      }
+    }
+  }
+
+  if( _is_powers(buf) || _is_even(buf) ) {
+    int64_t first_block;
+    int64_t second_block;
+    int64_t before_block;
+    int block_bits = 0;
+
+    if( _is_powers(buf) ) {
+      // We can't continue to negative numbers...
+      if( buf->offset_start - 1 <= 0 ) return 0;
+    }
+
+    first_block = _qbuffer_get_block(buf,
+                                     buf->offset_start,
+                                     NULL);
+
+    before_block = _qbuffer_get_block(buf,
+                                      buf->offset_start - 1,
+                                      &block_bits);
+
+    if( _is_powers(buf) ) {
+      // We can't continue to negative numbers...
+      if( before_block < 0 ) return 0;
+    }
+
+    if( before_block == first_block - 1 ) {
+      // also check that second block == first_block + 1,
+      // in order to handle the split block.
+      { // checked size >= 0 above
+        qbuffer_part_t* qbp;
+        qbp = (qbuffer_part_t*) deque_it_get_cur_ptr( sizeof(qbuffer_part_t), &buf->deque, deque_begin(& buf->deque));
+
+        second_block = _qbuffer_get_block(buf,
+                                          qbp->end_offset,
+                                          NULL);
+
+        if( second_block == first_block + 1 ) {
+          // OK, we can preserve the pattern.
+          *expect_size = (one << block_bits);
+          *new_log2_items_starting = buf->log2_items_starting;
+          return 1;
+        }
+      }
+    }
+  }
+
+  return 0;
+}
+
+// If we were to append a block and keep the existing pattern,
+// what size would it be?
+// Returns false if it would break the pattern (ie last block not full)
+// Assumes that extending the existing block is not going to work.
+static
+int _would_grow_back(qbuffer_t* buf, int64_t *expect_size, int8_t *new_log2_items_starting)
+{
+  int64_t one = 1;
+
+  *expect_size = 0;
+  *new_log2_items_starting = 0;
+
+  if( _is_other(buf) ) {
+    return 0;
+  }
+
+  if( deque_size(sizeof(qbuffer_part_t), &buf->deque) == 0 ) {
+    return 0;
+  }
+
+  // if there is only one block, and it does not already end
+  // on a power-of-two, then we add new anchor block
+  // so that the 2nd block ends on new_log2_items_starting.
+  if( deque_size(sizeof(qbuffer_part_t), &buf->deque) == 1 ) {
+    int log2, log2next;
+    int64_t use_len;
+    int64_t masked;
+   
+    if( _is_powers(buf) ) {
+      use_len = buf->offset_end;
+    } else {
+      use_len = buf->offset_end - buf->offset_start;
+    }
+
+    log2 = qio_log2_64(use_len);
+    if( (one << log2) < use_len ) log2++;
+    if( log2 < buf->log2_items_starting ) log2 = buf->log2_items_starting;
+
+    // is the end-offset already aligned with log2?
+    if( (buf->offset_end & ((one << log2) - 1)) == 0 ) {
+      // OK. We'll handle it below; no need for a split block.
+    } else {
+      log2next = _qbuffer_log2_next(use_len, buf->log2_items_starting);
+      // figure out the new block size so that end_offset will
+      // be log2-next-aligned.
+      masked = buf->offset_end & ((one << log2next) - 1);
+      *expect_size = (one << log2next) - masked;
+      *new_log2_items_starting = log2next;
+      return 1;
+    }
+  }
+
+  if( _is_powers(buf) || _is_even(buf) ) {
+    int64_t last_block;
+    int64_t after_block;
+    int block_bits = 0;
+
+    last_block = _qbuffer_get_block(buf,
+                                    buf->offset_end - 1,
+                                    NULL);
+    after_block = _qbuffer_get_block(buf,
+                                     buf->offset_end,
+                                     &block_bits);
+
+    if( after_block == last_block + 1 ) {
+      // OK, we can preserve the pattern.
+      *expect_size = (one << block_bits);
+      *new_log2_items_starting = buf->log2_items_starting;
+      return 1;
+    }
+  }
+
+  return 0;
+}
+ 
+// appends and disables "power" or "even" if needed.
+err_t qbuffer_append(qbuffer_t* buf, qbytes_t* bytes, int64_t skip_items, int64_t len_items, qbuffer_part_flags_t flags)
+{
+  int in_pattern = 0;
+  int64_t expect_size_items = 0;
+  int64_t expect_size_bytes = 0;
+  int8_t new_log2_items_starting = 0;
+  err_t err;
+
+  in_pattern = _would_grow_back(buf, &expect_size_items, &new_log2_items_starting);
+  if( in_pattern ) {
+    expect_size_bytes = buf->item_size * expect_size_items;
+
+    in_pattern = 0;
+    // check - is new block mutable and mutable extendable?
+    // is the new buffer correctly sized?
+    if( (flags & QB_PART_FLAGS_MUTABLE) ) {
+      if( (flags & QB_PART_FLAGS_REST_MUTABLE) ) {
+        // we need total bytes to be the right size.
+        if( expect_size_bytes == bytes->len && skip_items == 0 ) in_pattern = 1;
+      } else {
+        // we need provided region to be the right size.
+        if( expect_size_items == len_items ) in_pattern = 1;
+      }
+    }
+  }
+
+  if( ! in_pattern ) {
+    if( deque_size(sizeof(qbuffer_part_t), &buf->deque) == 0 ) {
+      // adding 1st block is always OK.
+    } else if( ! _is_other(buf) ) {
+      // disable "powers" or "even"
+      _make_other(buf);
+    }
+  }
+
+  err = _qbuffer_append_internal(buf, bytes, skip_items, len_items, flags);
+  if( err ) return err;
+
+  if( in_pattern ) {
+    buf->log2_items_starting = new_log2_items_starting;
+  }
+
+  return 0;
+}
+
+err_t qbuffer_append_buffer(qbuffer_t* dst, qbuffer_t* src, qbuffer_iter_t src_start, qbuffer_iter_t src_end, qbuffer_part_flags_t flags_mask)
 {
   qbuffer_iter_t src_cur = src_start;
   qbytes_t* bytes;
@@ -384,12 +703,14 @@ err_t qbuffer_append_buffer(qbuffer_t* buf, qbuffer_t* src, qbuffer_iter_t src_s
   int64_t len;
   err_t err;
 
-  if( buf == src ) return EINVAL;
+  if( dst == src ) return EINVAL;
+  if( dst->item_size != src->item_size ) return EINVAL;
 
-  while( qbuffer_iter_num_bytes(src_cur, src_end) > 0 ) {
-    qbuffer_iter_get(src_cur, src_end, &bytes, &skip, &len);
+  while( qbuffer_iter_num_items(src_cur, src_end) > 0 ) {
+    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &src->deque, src_cur.iter);
+    _qbuffer_iter_get_items(qbp, src_cur.offset, src->offset_end, &bytes, &skip, &len);
 
-    err = qbuffer_append(buf, bytes, skip, len);
+    err = qbuffer_append(dst, bytes, skip, len, qbp->flags & flags_mask);
     if( err ) return err;
 
     qbuffer_iter_next_part(src, &src_cur);
@@ -398,17 +719,18 @@ err_t qbuffer_append_buffer(qbuffer_t* buf, qbuffer_t* src, qbuffer_iter_t src_s
   return 0;
 }
 
-err_t qbuffer_prepend(qbuffer_t* buf, qbytes_t* bytes, int64_t skip_bytes, int64_t len_bytes)
+static
+err_t _qbuffer_prepend_internal(qbuffer_t* buf, qbytes_t* bytes, int64_t skip_items, int64_t len_items, qbuffer_part_flags_t flags)
 {
   qbuffer_part_t part;
   int64_t old_start, new_start;
   err_t err;
 
   old_start = buf->offset_start;
-  new_start = old_start - len_bytes;
+  new_start = old_start - len_items;
 
   // init part retains the bytes.
-  err = qbuffer_init_part(&part, bytes, skip_bytes, len_bytes, old_start);
+  err = _qbuffer_init_part(&part, bytes, skip_items, len_items, old_start, flags, buf->item_size);
   if( err ) return err;
 
   err = deque_push_front(sizeof(qbuffer_part_t), &buf->deque, &part);
@@ -419,26 +741,168 @@ err_t qbuffer_prepend(qbuffer_t* buf, qbytes_t* bytes, int64_t skip_bytes, int64
 
   buf->offset_start = new_start;
 
-  // invalidate cached entries.
-  qbuffer_clear_cached(buf);
+  return 0;
+}
+
+err_t qbuffer_prepend(qbuffer_t* buf, qbytes_t* bytes, int64_t skip_items, int64_t len_items, qbuffer_part_flags_t flags)
+{
+  int in_pattern = 0;
+  int64_t expect_size_items = 0;
+  int64_t expect_size_bytes = 0;
+  int8_t new_log2_items_starting = 0;
+  err_t err;
+
+  in_pattern = _would_grow_front(buf, &expect_size_items, &new_log2_items_starting);
+  if( in_pattern ) {
+    expect_size_bytes = buf->item_size * expect_size_items;
+
+    in_pattern = 0;
+    // check - is new block mutable and mutable extendable?
+    // is the new buffer correctly sized?
+    if( (flags & QB_PART_FLAGS_MUTABLE) ) {
+      if( (flags & QB_PART_FLAGS_REST_MUTABLE) ) {
+        int64_t end_within = skip_items + len_items;
+        // we need total bytes to be the right size.
+        if( expect_size_bytes == bytes->len &&
+            end_within == expect_size_items ) in_pattern = 1;
+      } else {
+        // we need provided region to be the right size.
+        if( expect_size_items == len_items ) in_pattern = 1;
+      }
+    }
+  }
+
+  if( ! in_pattern ) {
+    if( deque_size(sizeof(qbuffer_part_t), &buf->deque) == 0 ) {
+      // adding 1st block is always OK.
+    } else if( ! _is_other(buf) ) {
+      // disable "powers" or "even"
+      _make_other(buf);
+    }
+  }
+
+  err = _qbuffer_prepend_internal(buf, bytes, skip_items, len_items, flags);
+  if( err ) return err;
+
+  if( in_pattern ) {
+    buf->log2_items_starting = new_log2_items_starting;
+  }
 
   return 0;
 }
 
-void qbuffer_trim_front(qbuffer_t* buf, int64_t remove_bytes)
+// Adds *mutable* space to the right side of the buffer until
+// buf->offset_end >= new_end
+// then set the end of the buffer to be new_end unless round_to_chunk is passed.
+// Buffers added by this function are marked mutable.
+err_t qbuffer_grow_back(qbuffer_t* buf, int64_t add_items, int round_to_chunk)
 {
-  int64_t new_start = buf->offset_start + remove_bytes;
+  err_t err = 0;
+  int64_t new_end = buf->offset_end + add_items;
+  int64_t was_end = buf->offset_end;
 
-  if( remove_bytes == 0 ) return;
+  // Do nothing if growing unnecessary.
+  if( new_end < buf->offset_end ) return 0;
+
+  // Can we extend space on the right? Do try.
+  if( deque_size(sizeof(qbuffer_part_t), &buf->deque) > 0 ) {
+    // Get the last part.
+    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr( sizeof(qbuffer_part_t), &buf->deque, deque_last(sizeof(qbuffer_part_t), &buf->deque));
+
+    if( (qbp->flags & QB_PART_FLAGS_REST_MUTABLE) &&
+        buf->item_size * (qbp->skip + qbp->len) < qbp->bytes->len ) {
+      int64_t bytes_items = qbp->bytes->len / buf->item_size;
+      int64_t add = bytes_items - qbp->skip - qbp->len;
+      qbp->end_offset += add;
+      qbp->len += add;
+      buf->offset_end = qbp->end_offset;
+    }
+  }
+
+  // Add blocks to our buffer
+  while( new_end > buf->offset_end ) {
+    qbytes_t* bytes = NULL;
+    int64_t blocksz = -1;
+    int8_t new_log2_items_starting = 0;
+    _would_grow_back(buf, &blocksz, &new_log2_items_starting);
+
+    if( blocksz <= 0 ) {
+      int64_t buf_sz = qbytes_iobuf_size;
+      if( _is_powers(buf) ) {
+        buf_sz = qbytes_smallbuf_size; 
+      }
+      blocksz = _blocks_for_size(buf->item_size, buf_sz);
+      new_log2_items_starting = qio_log2_64(blocksz);
+    }
+
+    err = qbytes_create_buffer(&bytes, buf->item_size * blocksz);
+    if( err ) goto error;
+    err = qbuffer_append(buf, bytes, 0, blocksz, QB_PART_FLAGS_REST_MUTABLE|QB_PART_FLAGS_MUTABLE);
+    qbytes_release(bytes);
+    if( err ) goto error;
+  }
+
+  // Handle trimming back from entire chunk.
+  if( round_to_chunk ) {
+    // If we're rounding to the entire qbytes,
+    // we already did that, do nothing.
+  } else {
+    // Trim buf->offset_end and lastqbp so they do not exceed new_end.
+    if( deque_size(sizeof(qbuffer_part_t), &buf->deque) > 0 ) {
+      qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr( sizeof(qbuffer_part_t), &buf->deque, deque_last(sizeof(qbuffer_part_t), &buf->deque));
+      int64_t remove_here = qbp->end_offset - new_end;
+      assert( qbp->end_offset >= was_end ); // we must not have shrunk!
+      assert( buf->offset_end >= was_end );
+      assert( buf->offset_end >= new_end );
+      qbp->len -= remove_here;
+      qbp->end_offset -= remove_here;
+      buf->offset_end = new_end;
+    }
+  }
+
+error:
+  return err;
+}
+
+// Removes entire blocks from the right side of the buffer
+// to get the minimum buf->offset_end > new_end
+// Note if you want the buffer to have a specific number of
+// blocks afterwards, use qbuffer_trim_back; this one may
+// leave an empty data block at the end.
+void qbuffer_shrink_back(qbuffer_t* buf, int64_t remove_items)
+{
+  // Do nothing if shrinking unnecessary.
+  if( remove_items <= 0 ) return;
+  _qbuffer_trim_back(buf, remove_items, 1);
+}
+
+
+static inline
+void _qbuffer_setflags_truncate(qbuffer_part_t* qbp)
+{
+  // if it's not mutable, once we truncate it
+  // the unused portion will not be mutable either.
+  if( ! (qbp->flags & QB_PART_FLAGS_MUTABLE) ) {
+    if( qbp->flags & QB_PART_FLAGS_REST_MUTABLE ) {
+      qbp->flags ^= QB_PART_FLAGS_REST_MUTABLE;
+    }
+  }
+}
+
+void qbuffer_trim_front(qbuffer_t* buf, int64_t remove_items)
+{
+  int64_t new_start = buf->offset_start + remove_items;
+
+  if( remove_items == 0 ) return;
   
-  assert( remove_bytes > 0 );
+  assert( remove_items > 0 );
   assert( new_start <= buf->offset_end );
 
   while( deque_size(sizeof(qbuffer_part_t), &buf->deque) > 0 ) {
     // Get the first part.
-    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr( sizeof(qbuffer_part_t), deque_begin(& buf->deque));
+    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr( sizeof(qbuffer_part_t), &buf->deque, deque_begin(& buf->deque));
 
-    if( qbp->end_offset - qbp->len_bytes < new_start ) {
+    if( qbp->end_offset - qbp->len < new_start ) {
       // we might remove it entirely, or maybe
       // we just adjust its length and skip.
       if( qbp->end_offset <= new_start ) {
@@ -450,9 +914,10 @@ void qbuffer_trim_front(qbuffer_t* buf, int64_t remove_bytes)
         qbytes_release(bytes);
       } else {
         // Keep only a part of this chunk.
-        int64_t remove_here = new_start - (qbp->end_offset - qbp->len_bytes);
-        qbp->skip_bytes += remove_here;
-        qbp->len_bytes -= remove_here;
+        int64_t remove_here = new_start - (qbp->end_offset - qbp->len);
+        qbp->skip += remove_here;
+        qbp->len -= remove_here;
+        _qbuffer_setflags_truncate(qbp);
         break; // this is the last one.
       }
     } else {
@@ -462,53 +927,94 @@ void qbuffer_trim_front(qbuffer_t* buf, int64_t remove_bytes)
 
   // Now set the new offset.
   buf->offset_start = new_start;
-
-  // invalidate cached entries.
-  qbuffer_clear_cached(buf);
 }
 
-void qbuffer_trim_back(qbuffer_t* buf, int64_t remove_bytes)
-{
-  int64_t new_end = buf->offset_end - remove_bytes;
 
-  if( remove_bytes == 0 ) return;
-  assert( remove_bytes > 0 );
+void _qbuffer_trim_back(qbuffer_t* buf, int64_t remove_items, int shrinking)
+{
+  int64_t new_end = buf->offset_end - remove_items;
+  int remove;
+  deque_iterator_t cur;
+
+  if( remove_items == 0 ) return;
+  assert( remove_items > 0 );
   assert( new_end >= buf->offset_start );
 
   // Go through the deque removing entire parts.
   while( deque_size(sizeof(qbuffer_part_t), &buf->deque) > 0 ) {
     // Get the last part.
-    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr( sizeof(qbuffer_part_t), deque_last(sizeof(qbuffer_part_t), &buf->deque));
+    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr( sizeof(qbuffer_part_t), &buf->deque, deque_last(sizeof(qbuffer_part_t), &buf->deque));
 
-    if( qbp->end_offset > new_end ) {
-      // we might remove it entirely, or maybe
-      // we just adjust its length and skip.
-      if( qbp->end_offset - qbp->len_bytes >= new_end ) {
-        qbytes_t* bytes = qbp->bytes;
-        // starts entirely after new_end, remove the chunk.
-        // Remove it from the deque
-        deque_pop_front(sizeof(qbuffer_part_t), &buf->deque);
-        // release the bytes.
-        qbytes_release(bytes);
-      } else {
-        // Keep only a part of this chunk.
-        int64_t remove_here = qbp->end_offset - new_end;
-        qbp->len_bytes -= remove_here;
-        qbp->end_offset -= remove_here;
-        break; // this is the last one.
+    // In this first loop, we only remove entire qbp at a time.
+    if( qbp->end_offset - qbp->len < new_end ) break;
+
+    remove = 1;
+    if( shrinking ) {
+      remove = 0;
+      // only remove it if there is another empty data block at the end.
+      if( deque_size(sizeof(qbuffer_part_t), &buf->deque) >= 2 ) {
+        deque_iterator_t penultimate;
+        qbuffer_part_t* other;
+        penultimate = deque_last(sizeof(qbuffer_part_t), &buf->deque);
+        deque_it_back_one(sizeof(qbuffer_part_t), &penultimate);
+        other = (qbuffer_part_t*) deque_it_get_cur_ptr( sizeof(qbuffer_part_t), &buf->deque, penultimate);
+        // is other empty (or will be after this operation)?
+        if( other->end_offset - other->len >= new_end ) {
+          remove = 1;
+        } 
       }
-    } else {
-      break; // we're past
+      // if we choose not to remove it, exit the loop.
+      if( ! remove ) break;
     }
+    if( remove ) {
+      qbytes_t* bytes = qbp->bytes;
+      // starts entirely after new_end, remove the chunk.
+      // Remove it from the deque
+      deque_pop_back(sizeof(qbuffer_part_t), &buf->deque);
+      // release the bytes.
+      qbytes_release(bytes);
+    }
+  }
+
+  // now we will go through the buffer parts backwards looking
+  // to truncate existing buffers.
+  
+  // if there's nothing to fix, do nothing.
+  if( deque_size(sizeof(qbuffer_part_t), &buf->deque) == 0 ) return;
+  cur = deque_last(sizeof(qbuffer_part_t), &buf->deque);
+
+  while( 1 ) {
+    // consider removing cur.
+    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr( sizeof(qbuffer_part_t), &buf->deque, cur);
+
+    if( qbp->end_offset < new_end ) {
+      // Keep only a part of this chunk.
+      int64_t remove_here = qbp->end_offset - new_end;
+      if( remove_here > qbp->len ) remove_here = qbp->len;
+      qbp->len -= remove_here;
+      qbp->end_offset -= remove_here;
+      _qbuffer_setflags_truncate(qbp);
+    } else {
+      // we don't need to fix any more buffer parts.
+      break;
+    }
+
+    // if we're at the start, we're done
+    if ( deque_it_equals(cur, deque_begin(&buf->deque) ) ) break;
+
+    // go back one.
+    deque_it_back_one(sizeof(qbuffer_part_t), &cur);
   }
 
   // Now set the new offset.
   buf->offset_end = new_end;
-
-  // invalidate cached entries.
-  qbuffer_clear_cached(buf);
+}
+void qbuffer_trim_back(qbuffer_t* buf, int64_t remove_items)
+{
+  _qbuffer_trim_back(buf, remove_items, 0);
 }
 
+/*
 err_t qbuffer_pop_front(qbuffer_t* buf)
 {
   qbytes_t* bytes;
@@ -520,15 +1026,27 @@ err_t qbuffer_pop_front(qbuffer_t* buf)
 
   chunk = qbuffer_begin(buf);
 
-  qbuffer_iter_get(chunk, qbuffer_end(buf), &bytes, &skip, &len);
+  qbuffer_iter_get_items(buf, chunk, qbuffer_end(buf), &bytes, &skip, &len);
 
   deque_pop_front(sizeof(qbuffer_part_t), &buf->deque);
 
   buf->offset_start += len;
 
+  // if "powers" method, disable it
+  // if "even" method, we're OK.
+  if( buf->log2_blocks_per_superblock >= 0 ) {
+    // disable "powers"
+    buf->log2_blocks_per_superblock = -1;
+    buf->log2_items_per_block = -1;
+    buf->log2_items_starting = -1;
+    buf->has_split_first_block = 0;
+  }
+ 
   return 0;
 }
+*/
 
+/*
 err_t qbuffer_pop_back(qbuffer_t* buf)
 {
   qbytes_t* bytes;
@@ -541,14 +1059,16 @@ err_t qbuffer_pop_back(qbuffer_t* buf)
   chunk = qbuffer_end(buf);
   qbuffer_iter_prev_part(buf, &chunk);
 
-  qbuffer_iter_get(chunk, qbuffer_end(buf), &bytes, &skip, &len);
+  qbuffer_iter_get_items(buf, chunk, qbuffer_end(buf), &bytes, &skip, &len);
 
   deque_pop_back(sizeof(qbuffer_part_t), &buf->deque);
 
   buf->offset_end -= len;
 
+  // "powers" and "even" require no special handling.
   return 0;
 }
+*/
 
 void qbuffer_reposition(qbuffer_t* buf, int64_t new_offset_start)
 {
@@ -565,7 +1085,7 @@ void qbuffer_reposition(qbuffer_t* buf, int64_t new_offset_start)
   iter = start;
 
   while( ! deque_it_equals(iter, end) ) {
-    qbp = deque_it_get_cur_ptr(sizeof(qbuffer_part_t), iter);
+    qbp = deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, iter);
     qbp->end_offset += diff;
   }
 }
@@ -596,8 +1116,8 @@ void qbuffer_iter_next_part(qbuffer_t* buf, qbuffer_iter_t* iter)
     // if we're not at the end now... offset is from buf
     iter->offset = buf->offset_end;
   } else {
-    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), iter->iter);
-    iter->offset = qbp->end_offset - qbp->len_bytes;
+    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, iter->iter);
+    iter->offset = qbp->end_offset - qbp->len;
   }
 }
 
@@ -607,8 +1127,8 @@ void qbuffer_iter_prev_part(qbuffer_t* buf, qbuffer_iter_t* iter)
 
   deque_it_back_one(sizeof(qbuffer_part_t), & iter->iter);
 
-  qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), iter->iter);
-  iter->offset = qbp->end_offset - qbp->len_bytes;
+  qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, iter->iter);
+  iter->offset = qbp->end_offset - qbp->len;
 }
 
 void qbuffer_iter_floor_part(qbuffer_t* buf, qbuffer_iter_t* iter)
@@ -628,8 +1148,8 @@ void qbuffer_iter_floor_part(qbuffer_t* buf, qbuffer_iter_t* iter)
 
   {
     // Now, just set the offset appropriately.
-    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), iter->iter);
-    iter->offset = qbp->end_offset - qbp->len_bytes;
+    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, iter->iter);
+    iter->offset = qbp->end_offset - qbp->len;
   }
 }
 
@@ -641,7 +1161,7 @@ void qbuffer_iter_ceil_part(qbuffer_t* buf, qbuffer_iter_t* iter)
   if( deque_it_equals(iter->iter, d_end) ) {
     // We're at the end. Do nothing.
   } else {
-    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), iter->iter);
+    qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, iter->iter);
     iter->offset = qbp->end_offset;
     deque_it_forward_one(sizeof(qbuffer_part_t), & iter->iter);
   }
@@ -659,7 +1179,7 @@ void qbuffer_iter_advance(qbuffer_t* buf, qbuffer_iter_t* iter, int64_t amt)
     // forward search.
     iter->offset += amt;
     while( ! deque_it_equals(iter->iter, d_end) ) {
-      qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), iter->iter);
+      qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, iter->iter);
       if( iter->offset < qbp->end_offset ) {
         // it's in this one.
         return;
@@ -672,8 +1192,8 @@ void qbuffer_iter_advance(qbuffer_t* buf, qbuffer_iter_t* iter, int64_t amt)
 
     if( ! deque_it_equals( iter->iter, d_end ) ) {
       // is it within the current buffer?
-      qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), iter->iter);
-      if( iter->offset >= qbp->end_offset - qbp->len_bytes ) {
+      qbuffer_part_t* qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, iter->iter);
+      if( iter->offset >= qbp->end_offset - qbp->len ) {
         // it's in this one.
         return;
       }
@@ -685,8 +1205,8 @@ void qbuffer_iter_advance(qbuffer_t* buf, qbuffer_iter_t* iter, int64_t amt)
 
       deque_it_back_one(sizeof(qbuffer_part_t), & iter->iter);
 
-      qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), iter->iter);
-      if( iter->offset >= qbp->end_offset - qbp->len_bytes ) {
+      qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, iter->iter);
+      if( iter->offset >= qbp->end_offset - qbp->len ) {
         // it's in this one.
         return;
       }
@@ -696,50 +1216,153 @@ void qbuffer_iter_advance(qbuffer_t* buf, qbuffer_iter_t* iter, int64_t amt)
 
 
 
-
 // find buffer iterator part in logarithmic time
 // finds an offset in the window [offset_start,offset_end]
 // (in other words, offset might not start at 0)
+// offset is an item index.
 qbuffer_iter_t qbuffer_iter_at(qbuffer_t* buf, int64_t offset)
 {
   qbuffer_iter_t ret;
-  deque_iterator_t first = deque_begin(& buf->deque);
-  deque_iterator_t last = deque_end(& buf->deque);
-  deque_iterator_t middle;
-  qbuffer_part_t* qbp;
-  ssize_t num_parts = deque_it_difference(sizeof(qbuffer_part_t), last, first);
-  ssize_t half;
+  ssize_t num_parts = deque_size(sizeof(qbuffer_part_t), & buf->deque);
 
-  while( num_parts > 0 ) {
-    half = num_parts >> 1;
-    middle = first;
+  // do some bounds checking to start with
+  if( offset < buf->offset_start ) {
+    ret.offset = buf->offset_start;
+    ret.iter = deque_begin( & buf->deque );
+    return ret;
+  }
+  if( offset >= buf->offset_end || num_parts == 0 ) {
+    ret.offset = buf->offset_end;
+    ret.iter = deque_end( & buf->deque );
+    return ret;
+  }
 
-    deque_it_forward_n(sizeof(qbuffer_part_t), &middle, half);
+  // from now on, we assume num_parts > 0
+  if( _is_powers(buf) || _is_even(buf) ) {
+    // "powers" or "even" type; check first block (which may be 'split')
+    deque_iterator_t first = deque_begin(& buf->deque);
+    deque_iterator_t anchor = first;
+    qbuffer_part_t* qbp;
+    int64_t one = 1;
+    int64_t anchor_end = (one << buf->log2_items_starting);
 
-    qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), middle);
+    // check if it's in the first two blocks.
+
+    // there may be an out-of-pattern first block.
+    qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, first);
     if( offset < qbp->end_offset ) {
-      num_parts = half;
-    } else {
-      first = middle;
-      deque_it_forward_one(sizeof(qbuffer_part_t), &first);
-      num_parts = num_parts - half - 1;
+      // OK. return first == deque_begin.
+      ret.offset = offset;
+      ret.iter = first;
+      return ret;
+    }
+
+    // is the end_offset of the first block in the right place?
+    // if not, the end_offset of the second block should be,
+    // and the 2nd block is the anchor block.
+
+    if( (qbp->end_offset & (anchor_end-1)) != 0 ) {
+      // Try the 2nd block
+      deque_it_forward_one(sizeof(qbuffer_part_t), &anchor);
+      if( QBUF_EXTRA_CHECKS ) {
+        assert(num_parts >= 2);
+      }
+      qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, anchor);
+      if( offset < qbp->end_offset ) {
+        // OK, it's in the 2nd block.
+        ret.offset = offset;
+        ret.iter = anchor;
+        return ret;
+      }
+    }
+
+    {
+      // powers and even types compute a block index...
+      uint64_t block_index;
+      deque_iterator_t cur;
+      int64_t anchor_inside;
+      int64_t anchor_block_index;
+      int64_t offset_block_index;
+
+      qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, anchor);
+
+      anchor_inside = qbp->end_offset - 1;
+      if( QBUF_EXTRA_CHECKS ) {
+        if( _is_powers(buf) ) assert(anchor_inside >= 0);
+      }
+
+      anchor_block_index = _qbuffer_get_block(buf, anchor_inside, NULL);
+      offset_block_index = _qbuffer_get_block(buf, offset, NULL);
+      if( QBUF_EXTRA_CHECKS ) {
+        assert( anchor_block_index <= offset_block_index);
+      }
+
+      block_index = offset_block_index - anchor_block_index;
+
+      // now use the block index 
+      cur = anchor;
+      deque_it_forward_n(sizeof(qbuffer_part_t), &cur, block_index);
+      ret.offset = offset;
+      ret.iter = cur;
+
+      if( QBUF_EXTRA_CHECKS ) {
+        // check that the offset is in cur's qbp
+        qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, cur);
+        assert( offset < qbp->end_offset );
+        assert( offset >= qbp->end_offset - qbp->len );
+      }
+      return ret;
     }
   }
 
-  if( deque_it_equals(first, last) ) {
-    ret = qbuffer_end(buf);
-  } else {
-    qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), first);
-    ret.offset = offset;
-    ret.iter = first;
+  // If we get here, we need to do binary search.
+  // "other" type - do binary search.
+  {
+    deque_iterator_t first = deque_begin(& buf->deque);
+    deque_iterator_t middle;
+    qbuffer_part_t* qbp;
+    ssize_t half;
+
+    do {
+      half = num_parts >> 1;
+      middle = first;
+
+      deque_it_forward_n(sizeof(qbuffer_part_t), &middle, half);
+
+      qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, middle);
+      if( offset < qbp->end_offset ) {
+        num_parts = half;
+      } else {
+        first = middle;
+        deque_it_forward_one(sizeof(qbuffer_part_t), &first);
+        num_parts = num_parts - half - 1;
+      }
+    } while( num_parts > 0 );
+
+    if( deque_it_equals(first, deque_end( & buf->deque )) ) {
+      ret = qbuffer_end(buf);
+    } else {
+      ret.offset = offset;
+      ret.iter = first;
+
+      if( QBUF_EXTRA_CHECKS ) {
+        // check that the offset is in first's qbp
+        qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, first);
+        assert( offset < qbp->end_offset );
+        assert( offset >= qbp->end_offset - qbp->len );
+      }
+    }
+
+    return ret;
   }
-  return ret;
 }
 
-err_t qbuffer_to_iov(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end, 
-                     size_t max_iov, struct iovec *iov_out, 
-                     qbytes_t** bytes_out /* can be NULL */,
-                     size_t *iovcnt_out)
+static inline
+err_t _qbuffer_to_iov(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end, 
+                      size_t max_iov, struct iovec *iov_out, 
+                      qbytes_t** bytes_out /* can be NULL */,
+                      size_t *iovcnt_out,
+                      const int64_t item_size)
 {
   deque_iterator_t d_end = deque_end(& buf->deque);
   deque_iterator_t iter;
@@ -762,18 +1385,18 @@ err_t qbuffer_to_iov(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end,
 
   if( deque_it_equals(iter, end.iter) ) {
     // we're only pointing to a single block.
-    qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), iter);
+    qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, iter);
     if( i >= max_iov ) goto error_nospace;
-    iov_out[i].iov_base = PTR_ADDBYTES(qbp->bytes->data, qbp->skip_bytes + (start.offset - (qbp->end_offset - qbp->len_bytes)));
-    iov_out[i].iov_len = end.offset - start.offset;
+    iov_out[i].iov_base = PTR_ADDBYTES(qbp->bytes->data, item_size * (qbp->skip + (start.offset - (qbp->end_offset - qbp->len))));
+    iov_out[i].iov_len = item_size * (end.offset - start.offset);
     if( bytes_out ) bytes_out[i] = qbp->bytes;
     if( iov_out[i].iov_len > 0 ) i++;
   } else {
     // otherwise, there's a possibly partial block in start.
-    qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), iter);
+    qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, iter);
     if( i >= max_iov ) goto error_nospace;
-    iov_out[i].iov_base = PTR_ADDBYTES(qbp->bytes->data, qbp->skip_bytes + (start.offset - (qbp->end_offset - qbp->len_bytes)));
-    iov_out[i].iov_len = qbp->end_offset - start.offset;
+    iov_out[i].iov_base = PTR_ADDBYTES(qbp->bytes->data, item_size * (qbp->skip + (start.offset - (qbp->end_offset - qbp->len))));
+    iov_out[i].iov_len = item_size * (qbp->end_offset - start.offset);
     if( bytes_out ) bytes_out[i] = qbp->bytes;
     // store it if we had any data there.
     if( iov_out[i].iov_len > 0 ) i++;
@@ -790,10 +1413,10 @@ err_t qbuffer_to_iov(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end,
         return EINVAL;
       }
 
-      qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), iter);
+      qbp = (qbuffer_part_t*) deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, iter);
       if( i >= max_iov ) goto error_nospace;
-      iov_out[i].iov_base = PTR_ADDBYTES(qbp->bytes->data, qbp->skip_bytes);
-      iov_out[i].iov_len = qbp->len_bytes;
+      iov_out[i].iov_base = PTR_ADDBYTES(qbp->bytes->data, item_size * qbp->skip);
+      iov_out[i].iov_len = item_size * qbp->len;
       if( bytes_out ) bytes_out[i] = qbp->bytes;
       // store it if we had any data there.
       if( iov_out[i].iov_len > 0 ) i++;
@@ -807,12 +1430,12 @@ err_t qbuffer_to_iov(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end,
     if( deque_it_equals(iter, d_end) ) {
       // we're currently pointing to the end; no need to add more.
     } else {
-      qbp = deque_it_get_cur_ptr(sizeof(qbuffer_part_t), iter);
+      qbp = deque_it_get_cur_ptr(sizeof(qbuffer_part_t), &buf->deque, iter);
       // add a partial end block. We know it's different from
       // start since we handled that above.
       if( i >= max_iov ) goto error_nospace;
-      iov_out[i].iov_base = PTR_ADDBYTES(qbp->bytes->data, qbp->skip_bytes);
-      iov_out[i].iov_len = end.offset - (qbp->end_offset - qbp->len_bytes);
+      iov_out[i].iov_base = PTR_ADDBYTES(qbp->bytes->data, item_size * qbp->skip);
+      iov_out[i].iov_len = item_size * (end.offset - (qbp->end_offset - qbp->len));
       if( bytes_out ) bytes_out[i] = qbp->bytes;
       if( iov_out[i].iov_len > 0 ) i++;
     }
@@ -826,20 +1449,32 @@ error_nospace:
   return EMSGSIZE; // EOVERFLOW or ENOBUFS would make sense too
 }
 
+err_t qbuffer_to_iov(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end, 
+                      size_t max_iov, struct iovec *iov_out, 
+                      qbytes_t** bytes_out /* can be NULL */,
+                      size_t *iovcnt_out)
+{
+  if( buf->item_size == 1 ) {
+    return _qbuffer_to_iov(buf, start, end, max_iov, iov_out, bytes_out, iovcnt_out, 1);
+  } else {
+    return _qbuffer_to_iov(buf, start, end, max_iov, iov_out, bytes_out, iovcnt_out, buf->item_size);
+  }
+}
+
 err_t qbuffer_flatten(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end, qbytes_t** bytes_out)
 {
-  int64_t num_bytes = qbuffer_iter_num_bytes(start, end);
+  int64_t num_items = qbuffer_iter_num_items(start, end);
   ssize_t num_parts = qbuffer_iter_num_parts(start, end);
   struct iovec* iov = NULL;
   size_t iovcnt;
   size_t i,j;
-  qbytes_t* ret;
+  qbytes_t* ret = NULL;
   int iov_onstack;
   err_t err;
  
-  if( num_bytes < 0 || num_parts < 0 || start.offset < buf->offset_start || end.offset > buf->offset_end ) return EINVAL;
+  if( num_items < 0 || num_parts < 0 || start.offset < buf->offset_start || end.offset > buf->offset_end ) return EINVAL;
 
-  err = qbytes_create_calloc(&ret, num_bytes);
+  err = qbytes_create_buffer(&ret, buf->item_size * num_items);
   if( err ) return err;
 
   MAYBE_STACK_ALLOC(num_parts*sizeof(struct iovec), iov, iov_onstack);
@@ -925,7 +1560,7 @@ error:
 
 err_t qbuffer_copyout(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end, void* ptr, size_t ret_len)
 {
-  int64_t num_bytes = qbuffer_iter_num_bytes(start, end);
+  int64_t num_items = qbuffer_iter_num_items(start, end);
   ssize_t num_parts = qbuffer_iter_num_parts(start, end);
   struct iovec* iov = NULL;
   size_t iovcnt;
@@ -933,7 +1568,7 @@ err_t qbuffer_copyout(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end, 
   int iov_onstack;
   err_t err;
  
-  if( num_bytes < 0 || num_parts < 0 || start.offset < buf->offset_start || end.offset > buf->offset_end ) return EINVAL;
+  if( num_items < 0 || num_parts < 0 || start.offset < buf->offset_start || end.offset > buf->offset_end ) return EINVAL;
 
   MAYBE_STACK_ALLOC(num_parts*sizeof(struct iovec), iov, iov_onstack);
   if( ! iov ) return ENOMEM;
@@ -960,7 +1595,7 @@ error:
 
 err_t qbuffer_copyin(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end, const void* ptr, size_t ret_len)
 {
-  int64_t num_bytes = qbuffer_iter_num_bytes(start, end);
+  int64_t num_items = qbuffer_iter_num_items(start, end);
   ssize_t num_parts = qbuffer_iter_num_parts(start, end);
   struct iovec* iov = NULL;
   size_t iovcnt;
@@ -968,7 +1603,7 @@ err_t qbuffer_copyin(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end, c
   int iov_onstack;
   err_t err;
  
-  if( num_bytes < 0 || num_parts < 0 || start.offset < buf->offset_start || end.offset > buf->offset_end ) return EINVAL;
+  if( num_items < 0 || num_parts < 0 || start.offset < buf->offset_start || end.offset > buf->offset_end ) return EINVAL;
 
   MAYBE_STACK_ALLOC(num_parts*sizeof(struct iovec), iov, iov_onstack);
   if( ! iov ) return ENOMEM;
@@ -996,9 +1631,9 @@ error:
 err_t qbuffer_copyin_buffer(qbuffer_t* dst, qbuffer_iter_t dst_start, qbuffer_iter_t dst_end,
                             qbuffer_t* src, qbuffer_iter_t src_start, qbuffer_iter_t src_end)
 {
-  int64_t dst_num_bytes = qbuffer_iter_num_bytes(dst_start, dst_end);
+  int64_t dst_num_items = qbuffer_iter_num_items(dst_start, dst_end);
   ssize_t dst_num_parts = qbuffer_iter_num_parts(dst_start, dst_end);
-  int64_t src_num_bytes = qbuffer_iter_num_bytes(src_start, src_end);
+  int64_t src_num_items = qbuffer_iter_num_items(src_start, src_end);
   ssize_t src_num_parts = qbuffer_iter_num_parts(src_start, src_end);
   struct iovec* iov = NULL;
   size_t iovcnt;
@@ -1008,8 +1643,9 @@ err_t qbuffer_copyin_buffer(qbuffer_t* dst, qbuffer_iter_t dst_start, qbuffer_it
   qbuffer_iter_t dst_cur, dst_cur_end;
  
   if( dst == src ) return EINVAL;
-  if( dst_num_bytes < 0 || dst_num_parts < 0 || dst_start.offset < dst->offset_start || dst_end.offset > dst->offset_end ) return EINVAL;
-  if( src_num_bytes < 0 || src_num_parts < 0 || src_start.offset < src->offset_start || src_end.offset > src->offset_end ) return EINVAL;
+  if( dst_num_items < 0 || dst_num_parts < 0 || dst_start.offset < dst->offset_start || dst_end.offset > dst->offset_end ) return EINVAL;
+  if( src_num_items < 0 || src_num_parts < 0 || src_start.offset < src->offset_start || src_end.offset > src->offset_end ) return EINVAL;
+  if( dst->item_size != src->item_size ) return EINVAL;
 
   MAYBE_STACK_ALLOC(src_num_parts*sizeof(struct iovec), iov, iov_onstack);
   if( ! iov ) return ENOMEM;
@@ -1020,7 +1656,7 @@ err_t qbuffer_copyin_buffer(qbuffer_t* dst, qbuffer_iter_t dst_start, qbuffer_it
   dst_cur = dst_start;
   for( i = 0; i < iovcnt; i++ ) {
     dst_cur_end = dst_cur;
-    qbuffer_iter_advance(dst, &dst_cur_end, iov[i].iov_len);
+    qbuffer_iter_advance(dst, &dst_cur_end, iov[i].iov_len / dst->item_size);
     err = qbuffer_copyin(dst, dst_cur, dst_cur_end, iov[i].iov_base, iov[i].iov_len);
     if( err ) goto error;
     dst_cur = dst_cur_end;
@@ -1036,7 +1672,7 @@ error:
 
 err_t qbuffer_memset(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end, unsigned char byte)
 {
-  int64_t num_bytes = qbuffer_iter_num_bytes(start, end);
+  int64_t num_items = qbuffer_iter_num_items(start, end);
   ssize_t num_parts = qbuffer_iter_num_parts(start, end);
   struct iovec* iov = NULL;
   size_t iovcnt;
@@ -1044,7 +1680,7 @@ err_t qbuffer_memset(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end, u
   int iov_onstack;
   err_t err;
  
-  if( num_bytes < 0 || num_parts < 0 || start.offset < buf->offset_start || end.offset > buf->offset_end ) return EINVAL;
+  if( num_items < 0 || num_parts < 0 || start.offset < buf->offset_start || end.offset > buf->offset_end ) return EINVAL;
 
   MAYBE_STACK_ALLOC(num_parts*sizeof(struct iovec), iov, iov_onstack);
   if( ! iov ) return ENOMEM;
