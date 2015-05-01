@@ -1,0 +1,2 @@
+# Skip this test on valgrind to quiet glibc dl_ errors (see jira issue 7)
+CHPL_TEST_VGRND_EXE == on
