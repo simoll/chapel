@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef _SYS_BASIC_H
 #define _SYS_BASIC_H
 
@@ -6,9 +25,12 @@
 #define _BSD_SOURCE
 #endif
 
-#ifndef _DARWIN_C_SOURCE
 // to get NI_MAXHOST or NI_MAXSERV
+#ifndef _DARWIN_C_SOURCE
 #define _DARWIN_C_SOURCE
+#endif
+#ifndef _NETBSD_SOURCE
+#define _NETBSD_SOURCE
 #endif
 
 // AIX needs _ALL_SOURCE
@@ -29,15 +51,27 @@
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200112L
 #endif
-#ifndef _FILE_OFFSET_BITS
-#define _FILE_OFFSET_BITS 64
+
+#ifndef _DEFAULT_SOURCE
+// Quiets warnings about _BSD_SOURCE being deprecated in glbic >= 2.20
+// This define enables everything _BSD_SOURCE does (and more) with glibc >= 2.19
+#define _DEFAULT_SOURCE
 #endif
 
-#ifdef __GNUC__
-#define ___always_inline inline __attribute__((__always_inline__))
-#else
-#define ___always_inline inline
-#endif
+//
+// The following breaks #include of "glob.h" with the Cray CCE
+// compiler and also complicates things for the #inclusion of dirent.h
+// with most PrgEnv-* options on Crays, as seen in chpldirent.h.
+// Michael added this in order to permit the support of files larger than 4GB
+// on 32-bit platforms.
+// Note that it's necessary to set this flag for Ubuntu 14.04 32-bit to get a
+// working preadv/pwritev, so we set that in a Makefile. One possibility
+// would be to set it here for 32-bit platforms only (e.g. using
+// __SIZEOF_POINTER__ == 4 which would work in GCC).
+//
+//#ifndef _FILE_OFFSET_BITS
+//#define _FILE_OFFSET_BITS 64
+//#endif
 
 // Ask a C++ compiler if it would please include e.g. INT64_MAX
 #define __STDC_CONSTANT_MACROS

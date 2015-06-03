@@ -1,3 +1,20 @@
+# Copyright 2004-2015 Cray Inc.
+# Other additional copyright holders may be indicated within.
+# 
+# The entirety of this work is licensed under the Apache License,
+# Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License.
+# 
+# You may obtain a copy of the License at
+# 
+#     http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 #
 # settings for gnu-compatible platforms
 #
@@ -26,7 +43,6 @@ CFLAGS += -fprofile-arcs -ftest-coverage
 LDFLAGS += -fprofile-arcs
 endif
 
-
 #
 # Flags for compiler, runtime, and generated code
 #
@@ -49,6 +65,10 @@ ifneq ($(CHPL_MAKE_TARGET_ARCH), unknown)
 SPECIALIZE_CFLAGS = -march=$(CHPL_MAKE_TARGET_ARCH)
 endif
 endif
+
+# Set flag for lax or IEEE floating point
+FAST_FLOAT_GEN_CFLAGS = -ffast-math
+IEEE_FLOAT_GEN_CFLAGS = -fno-fast-math
 
 ifeq ($(CHPL_MAKE_PLATFORM), darwin)
 # build 64-bit binaries when on a 64-bit capable PowerPC
@@ -117,9 +137,9 @@ GEN_CFLAGS += -Wno-strict-overflow
 endif
 
 #
-# developer settings
+# compiler warnings settings
 #
-ifdef CHPL_DEVELOPER
+ifeq ($(WARNINGS), 1)
 COMP_CFLAGS += $(WARN_CXXFLAGS)
 RUNTIME_CFLAGS += $(WARN_CFLAGS) -Wno-char-subscripts
 RUNTIME_CXXFLAGS += $(WARN_CXXFLAGS)

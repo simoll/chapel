@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //
 // cleanup
 //
@@ -6,6 +25,7 @@
 //
 
 #include "astutil.h"
+#include "stlUtil.h"
 #include "build.h"
 #include "expr.h"
 #include "passes.h"
@@ -151,9 +171,9 @@ static void flatten_primary_methods(FnSymbol* fn) {
 
 static void change_cast_in_where(FnSymbol* fn) {
   if (fn->where) {
-    Vec<BaseAST*> asts;
+    std::vector<BaseAST*> asts;
     collect_asts(fn->where, asts);
-    forv_Vec(BaseAST, ast, asts) {
+    for_vector(BaseAST, ast, asts) {
       if (CallExpr* call = toCallExpr(ast)) {
         if (call->isNamed("_cast")) {
           call->primitive = primitives[PRIM_IS_SUBTYPE];
@@ -166,25 +186,25 @@ static void change_cast_in_where(FnSymbol* fn) {
 
 
 void cleanup(void) {
-  Vec<BaseAST*> asts;
+  std::vector<BaseAST*> asts;
   collect_asts(rootModule, asts);
 
-  forv_Vec(BaseAST, ast, asts) {
+  for_vector(BaseAST, ast, asts) {
     SET_LINENO(ast);
     if (DefExpr* def = toDefExpr(ast)) {
       normalize_nested_function_expressions(def);
     }
   }
 
-  forv_Vec(BaseAST, ast, asts) {
-    SET_LINENO(ast);
-    if (BlockStmt* block = toBlockStmt(ast)) {
+  for_vector(BaseAST, ast1, asts) {
+    SET_LINENO(ast1);
+    if (BlockStmt* block = toBlockStmt(ast1)) {
       if (block->blockTag == BLOCK_SCOPELESS && block->list)
         flatten_scopeless_block(block);
-    } else if (CallExpr* call = toCallExpr(ast)) {
+    } else if (CallExpr* call = toCallExpr(ast1)) {
       if (call->isNamed("_build_tuple"))
         destructureTupleAssignment(call);
-    } else if (DefExpr* def = toDefExpr(ast)) {
+    } else if (DefExpr* def = toDefExpr(ast1)) {
       if (FnSymbol* fn = toFnSymbol(def->sym)) {
         flatten_primary_methods(fn);
         change_cast_in_where(fn);

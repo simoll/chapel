@@ -1,16 +1,42 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ *
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ *
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include <ostream>
+#include <sstream>
+#include <string>
+
 #include "baseAST.h"
 
 #include "astutil.h"
+#include "CForLoop.h"
 #include "expr.h"
+#include "ForLoop.h"
 #include "log.h"
+#include "ParamForLoop.h"
+#include "parser.h"
 #include "passes.h"
 #include "runpasses.h"
 #include "stmt.h"
 #include "stringutil.h"
 #include "symbol.h"
 #include "type.h"
-#include "yy.h"
-
+#include "WhileStmt.h"
 
 static void cleanModuleList();
 
@@ -179,7 +205,6 @@ void cleanAst() {
   // will be deleted with the clean_gvec call for ModuleSymbols.) 
   clean_modvec(allModules);
   clean_modvec(userModules);
-  clean_modvec(mainModules);
  
   //
   // clean global vectors and delete dead ast instances
@@ -257,15 +282,19 @@ BaseAST::BaseAST(AstTag type) :
   }
 }
 
-BaseAST::~BaseAST() { 
+
+const std::string BaseAST::tabText = "   ";
+
+
+BaseAST::~BaseAST() {
 }
 
 int BaseAST::linenum() const {
-  return astloc.lineno; 
+  return astloc.lineno;
 }
 
 const char* BaseAST::fname() const {
-  return astloc.filename; 
+  return astloc.filename;
 }
 
 const char* BaseAST::stringLoc(void) const {
@@ -278,25 +307,32 @@ const char* BaseAST::stringLoc(void) const {
 
 
 ModuleSymbol* BaseAST::getModule() {
-  if (!this)
-    return NULL;
-  if (ModuleSymbol* x = toModuleSymbol(this))
-    return x;
-  else if (Type* x = toType(this))
-    return x->symbol->getModule();
-  else if (Symbol* x = toSymbol(this))
-    return x->defPoint->getModule();
-  else if (Expr* x = toExpr(this))
-    return x->parentSymbol->getModule();
-  else
+  ModuleSymbol* retval = NULL;
+
+  if (ModuleSymbol* x = toModuleSymbol(this)) {
+    retval = x;
+
+  } else if (Type* x = toType(this)) {
+    if (x->symbol != NULL)
+      retval = x->symbol->getModule();
+
+  } else if (Symbol* x = toSymbol(this)) {
+    if (x->defPoint != NULL)
+      retval = x->defPoint->getModule();
+
+  } else if (Expr* x = toExpr(this)) {
+    if (x->parentSymbol != NULL)
+      retval = x->parentSymbol->getModule();
+
+  } else {
     INT_FATAL(this, "Unexpected case in BaseAST::getModule()");
-  return NULL;
+  }
+
+  return retval;
 }
 
 
 FnSymbol* BaseAST::getFunction() {
-  if (!this)
-    return NULL;
   if (ModuleSymbol* x = toModuleSymbol(this))
     return x->initFn;
   else if (FnSymbol* x = toFnSymbol(this))
@@ -318,7 +354,7 @@ Type* BaseAST::getValType() {
   INT_ASSERT(type);
   if (type->symbol->hasFlag(FLAG_REF))
     return type->getField("_val")->type;
-  else if (type->symbol->hasFlag(FLAG_WIDE))
+  else if (type->symbol->hasFlag(FLAG_WIDE_REF))
     return type->getField("addr")->getValType();
   else
     return type;
@@ -329,7 +365,7 @@ Type* BaseAST::getRefType() {
   INT_ASSERT(type);
   if (type->symbol->hasFlag(FLAG_REF))
     return type;
-  else if (type->symbol->hasFlag(FLAG_WIDE))
+  else if (type->symbol->hasFlag(FLAG_WIDE_REF))
     return type->getField("addr")->type;
   else
     return type->refType;
@@ -340,7 +376,7 @@ Type* BaseAST::getWideRefType() {
   INT_ASSERT(type);
   if (type->symbol->hasFlag(FLAG_REF))
     return wideRefMap.get(type);
-  else if (type->symbol->hasFlag(FLAG_WIDE))
+  else if (type->symbol->hasFlag(FLAG_WIDE_REF))
     return type;
   else
     return wideRefMap.get(type->getRefType());
@@ -371,7 +407,17 @@ const char* BaseAST::astTagAsString() const {
       break;
 
     case E_BlockStmt:
-      retval = "BlockStmt";
+      {
+        // see AST_CHILDREN_CALL
+        const BlockStmt* stmt = toConstBlockStmt(this);
+        if (false) retval = "";
+        else if (stmt->isCForLoop())     retval = "CForLoop";
+        else if (stmt->isForLoop())      retval = "ForLoop";
+        else if (stmt->isParamForLoop()) retval = "ParamForLoop";
+        else if (stmt->isWhileDoStmt())  retval = "WhileDoStmt";
+        else if (stmt->isDoWhileStmt())  retval = "DoWhileStmt";
+        else retval = "BlockStmt";
+      }
       break;
 
     case E_CondStmt:
@@ -431,16 +477,41 @@ const char* BaseAST::astTagAsString() const {
 }
 
 
+void BaseAST::printTabs(std::ostream *file, unsigned int tabs) {
+  for (unsigned int i = 0; i < tabs; i++) {
+    *file << this->tabText;
+  }
+}
+
+
+// This method is the same for several subclasses of BaseAST, so it is defined
+// her on BaseAST. 'doc' is not defined as a member of BaseAST, so it must be
+// taken as an argument here.
+//
+// TODO: Can BaseAST define a 'doc' member? What if `chpl --doc` went away and
+//       `chpldoc` was compiled with a special #define (e.g. -DCHPLDOC) so the
+//       'doc' member and all doc-related methods would only be available to
+//       chpldoc? (thomasvandoren, 2015-02-21)
+void BaseAST::printDocsDescription(const char *doc, std::ostream *file, unsigned int tabs) {
+  if (doc != NULL) {
+    std::stringstream sStream(ltrimAllLines(doc));
+    std::string line;
+    while (std::getline(sStream, line)) {
+      this->printTabs(file, tabs);
+      *file << line;
+      *file << std::endl;
+    }
+  }
+}
+
+
 astlocT currentAstLoc(0,NULL);
 
-Vec<ModuleSymbol*> mainModules; // Contains main modules
 Vec<ModuleSymbol*> userModules; // Contains user + main modules
 Vec<ModuleSymbol*> allModules;  // Contains all modules
 
 void registerModule(ModuleSymbol* mod) {
   switch (mod->modTag) {
-  case MOD_MAIN:
-    mainModules.add(mod);
   case MOD_USER:
     userModules.add(mod);
   case MOD_STANDARD:
@@ -460,13 +531,6 @@ void registerModule(ModuleSymbol* mod) {
         x = y;                                          \
   } while (0)
 
-#define SUB_LABEL(x)                                    \
-  do {                                                  \
-    if (x)                                              \
-      if (LabelSymbol* y = toLabelSymbol(map->get(x)))  \
-        x = y;                                          \
-  } while (0)
-
 #define SUB_TYPE(x)                                     \
   do {                                                  \
     if (x)                                              \
@@ -477,21 +541,39 @@ void registerModule(ModuleSymbol* mod) {
 void update_symbols(BaseAST* ast, SymbolMap* map) {
   if (SymExpr* sym_expr = toSymExpr(ast)) {
     SUB_SYMBOL(sym_expr->var);
+
   } else if (DefExpr* defExpr = toDefExpr(ast)) {
     SUB_TYPE(defExpr->sym->type);
-  } else if (BlockStmt* bs = toBlockStmt(ast)) {
-    SUB_LABEL(bs->breakLabel);
-    SUB_LABEL(bs->continueLabel);
+
+  } else if (LoopStmt* ls = toLoopStmt(ast)) {
+    LabelSymbol* breakLabel    = ls->breakLabelGet();
+    LabelSymbol* continueLabel = ls->continueLabelGet();
+
+    if (breakLabel != 0) {
+      if (LabelSymbol* y = toLabelSymbol(map->get(breakLabel))) {
+        ls->breakLabelSet(y);
+      }
+    }
+
+    if (continueLabel != 0) {
+      if (LabelSymbol* y = toLabelSymbol(map->get(continueLabel))) {
+        ls->continueLabelSet(y);
+      }
+    }
+
   } else if (VarSymbol* ps = toVarSymbol(ast)) {
     SUB_TYPE(ps->type);
+
   } else if (FnSymbol* ps = toFnSymbol(ast)) {
     SUB_TYPE(ps->type);
     SUB_TYPE(ps->retType);
     SUB_SYMBOL(ps->_this);
     SUB_SYMBOL(ps->_outer);
+
   } else if (ArgSymbol* ps = toArgSymbol(ast)) {
     SUB_TYPE(ps->type);
   }
+
   AST_CHILDREN_CALL(ast, update_symbols, map);
 }
 
@@ -502,13 +584,76 @@ GenRet baseASTCodegen(BaseAST* ast)
   ret.isUnsigned = ! is_signed(ret.chplType);
   return ret;
 }
+
 GenRet baseASTCodegenInt(int x)
 {
   return baseASTCodegen(new_IntSymbol(x, INT_SIZE_64));
 }
+
 GenRet baseASTCodegenString(const char* str)
 {
   return baseASTCodegen(new_StringSymbol(str));
+}
+
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
+
+bool isLoopStmt(const BaseAST* a)
+{
+  const BlockStmt* stmt = toConstBlockStmt(a);
+
+  return (stmt != 0 && stmt->isLoopStmt()) ? true : false;
+}
+
+bool isWhileStmt(const BaseAST* a)
+{
+  const BlockStmt* stmt = toConstBlockStmt(a);
+
+  return (stmt != 0 && stmt->isWhileStmt()) ? true : false;
+}
+
+bool isWhileDoStmt(const BaseAST* a)
+{
+  const BlockStmt* stmt = toConstBlockStmt(a);
+
+  return (stmt != 0 && stmt->isWhileDoStmt()) ? true : false;
+}
+
+bool isDoWhileStmt(const BaseAST* a)
+{
+  const BlockStmt* stmt = toConstBlockStmt(a);
+
+  return (stmt != 0 && stmt->isDoWhileStmt()) ? true : false;
+}
+
+bool isParamForLoop(const BaseAST* a)
+{
+  const BlockStmt* stmt = toConstBlockStmt(a);
+
+  return (stmt != 0 && stmt->isParamForLoop()) ? true : false;
+}
+
+bool isForLoop(const BaseAST* a)
+{
+  const BlockStmt* stmt = toConstBlockStmt(a);
+
+  return (stmt != 0 && stmt->isForLoop()) ? true : false;
+}
+
+bool isCoforallLoop(const BaseAST* a)
+{
+  const BlockStmt* stmt = toConstBlockStmt(a);
+
+  return (stmt != 0 && stmt->isCoforallLoop()) ? true : false;
+}
+
+bool isCForLoop(const BaseAST* a)
+{
+  const BlockStmt* stmt = toConstBlockStmt(a);
+
+  return (stmt != 0 && stmt->isCForLoop()) ? true : false;
 }
 
 /************************************* | **************************************

@@ -1,11 +1,33 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ *
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ *
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include <vector>
+
+#include "optimizations.h"
+
 #include "astutil.h"
 #include "bb.h"
 #include "bitVec.h"
 #include "expr.h"
-#include "optimizations.h"
+#include "stlUtil.h"
 #include "stmt.h"
 #include "view.h"
-
 
 static void
 reachingDefinitionsAnalysis(FnSymbol* fn,
@@ -16,7 +38,9 @@ reachingDefinitionsAnalysis(FnSymbol* fn,
                             std::vector<BitVec*>& IN) {
   Vec<Symbol*> locals;
   Map<Symbol*,int> localMap;
-  buildLocalsVectorMap(fn, locals, localMap);
+
+  BasicBlock::buildLocalsVectorMap(fn, locals, localMap);
+
   buildDefUseSets(locals, fn, defSet, useSet);
 
   //
@@ -26,9 +50,7 @@ reachingDefinitionsAnalysis(FnSymbol* fn,
   // buildDefUseMaps, but is computed from the defSet in this more
   // efficient manner
   //
-  int localDefs[locals.n];
-  for (int i = 0; i < locals.n; i++)
-    localDefs[i] = 0;
+  std::vector<int> localDefs(locals.n);
   forv_Vec(SymExpr, se, defSet) {
     if (se) {
       localDefs[localMap.get(se->var)]++;
@@ -61,9 +83,9 @@ reachingDefinitionsAnalysis(FnSymbol* fn,
     BitVec* out = new BitVec(defs.n);
     for (int i = bb->exprs.size()-1; i >= 0; i--) {
       Expr* expr = bb->exprs[i];
-      Vec<SymExpr*> symExprs;
+      std::vector<SymExpr*> symExprs;
       collectSymExprs(expr, symExprs);
-      forv_Vec(SymExpr, se, symExprs) {
+      for_vector(SymExpr, se, symExprs) {
         if (defSet.set_in(se)) {
           if (!bbDefSet.set_in(se->var)) {
             gen->set(defMap.get(se));
@@ -84,19 +106,19 @@ reachingDefinitionsAnalysis(FnSymbol* fn,
 
 #ifdef DEBUG_REACHING
   list_view(fn);
-  printBasicBlocks(fn);
-  printDefsVector(defs, defMap);
-  printf("KILL:\n"); printBitVectorSets(KILL);
-  printf("GEN:\n"); printBitVectorSets(GEN);
-  printf("IN:\n"); printBitVectorSets(IN);
-  printf("OUT:\n"); printBitVectorSets(OUT);
+  BasicBlock::printBasicBlocks(fn);
+  BasicBlock::printDefsVector(defs, defMap);
+  printf("KILL:\n"); BasicBlock::printBitVectorSets(KILL);
+  printf("GEN:\n");  BasicBlock::printBitVectorSets(GEN);
+  printf("IN:\n");   BasicBlock::printBitVectorSets(IN);
+  printf("OUT:\n");  BasicBlock::printBitVectorSets(OUT);
 #endif
 
-  forwardFlowAnalysis(fn, GEN, KILL, IN, OUT, false);
+  BasicBlock::forwardFlowAnalysis(fn, GEN, KILL, IN, OUT, false);
 
 #ifdef DEBUG_REACHING
-  printf("IN:\n"); printBitVectorSets(IN);
-  printf("OUT:\n"); printBitVectorSets(OUT);
+  printf("IN:\n");  BasicBlock::printBitVectorSets(IN);
+  printf("OUT:\n"); BasicBlock::printBitVectorSets(OUT);
 #endif
 
   for_vector(BitVec, gen, GEN)
@@ -143,9 +165,9 @@ buildDefUseChains(FnSymbol* fn,
     BasicBlock* bb = (*fn->basicBlocks)[i];
     BitVec* in = IN[i];
     for_vector(Expr, expr, bb->exprs) {
-      Vec<SymExpr*> symExprs;
+      std::vector<SymExpr*> symExprs;
       collectSymExprs(expr, symExprs);
-      forv_Vec(SymExpr, se, symExprs) {
+      for_vector(SymExpr, se, symExprs) {
         if (useSet.set_in(se)) {
           UD[se] = new Vec<SymExpr*>();
           for (int j = defsIndexMap.get(se->var); j < defs.n; j++) {
@@ -158,12 +180,12 @@ buildDefUseChains(FnSymbol* fn,
           }
         }
       }
-      forv_Vec(SymExpr, se, symExprs) {
-        if (defSet.set_in(se)) {
-          for (int j = defsIndexMap.get(se->var); j < defs.n; j++) {
-            if (defs.v[j]->var != se->var)
+      for_vector(SymExpr, se1, symExprs) {
+        if (defSet.set_in(se1)) {
+          for (int j = defsIndexMap.get(se1->var); j < defs.n; j++) {
+            if (defs.v[j]->var != se1->var)
               break;
-            if (defs.v[j] == se)
+            if (defs.v[j] == se1)
               in->set(j);
             else
               in->unset(j);

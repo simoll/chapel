@@ -191,7 +191,11 @@ include \chpl{complex(64)} and \chpl{complex(128)}.
 
 The real and imaginary components can be accessed via the methods
 \chpl{re} and \chpl{im}.  The type of these components is real.
-See~\rsec{Math} for math routines for complex types.
+The standard \chpl{Math} module provides some functions on
+complex types. See
+\\ %formatting
+\mbox{$$ $$ $$ $$ $$} %indent
+\url{http://chapel.cray.com/docs/latest/modules/standard/Math.html}
 
 \begin{example}
 Given a complex number \chpl{c} with the value \chpl{3.14+2.72i}, the
@@ -293,6 +297,7 @@ constants must be prefixed by the enumerated type and a dot.
 \end{chapelexample}
 
 
+\clearpage
 \section{Structured Types}
 \label{Structured_Types}
 \index{types!structured}
@@ -344,6 +349,7 @@ A tuple is a light-weight record that consists of one or more
 anonymous fields.  If all the fields are of the same type, the tuple
 is homogeneous.  Tuples are defined in~\rsec{Tuples}.
 
+\clearpage
 \section{Data Parallel Types}
 \label{Data_Parallel_Types}
 \index{types!dataparallel}
@@ -394,6 +400,7 @@ synchronization-type:
 Sync and single types are discussed in \rsec{Synchronization_Variables}.
 The atomic type is discussed in \rsec{Atomic_Variables}.
 
+\clearpage
 \section{Type Aliases}
 \label{Type_Aliases}
 \index{types!aliases}

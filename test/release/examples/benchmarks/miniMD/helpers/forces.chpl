@@ -107,9 +107,8 @@ class ForceEAM : Force  {
 
     var r, p, cof1, cof2, cof3, cof4 : real;
 
-    for (f,m) in zip(frho[2..], 2.. ) {
-      m -= 1; // get us to 0-based C arrays.
-      r = (m - 1) * deltaDensity;
+    for (f,m) in zip(frho[2..], 0.. ) {
+      r = m * deltaDensity;
       p = r / funcfl.deltaDensity + 1.0;
       k = p : int;
       k = min(k, funcfl.numDensity-2);
@@ -125,9 +124,8 @@ class ForceEAM : Force  {
     } // verified correct
 
     rSpace = {1..(numPotentials+1)};
-    for (f,m) in zip(rhor[2..], 2..) {
-      m -= 1;
-      r = (m - 1) * deltaPotential;
+    for (f,m) in zip(rhor[2..], 0..) {
+      r = m * deltaPotential;
       p = r / funcfl.deltaPotential + 1.0;
       k = p : int;
       k = min(k, funcfl.numPotentials - 2);
@@ -142,9 +140,8 @@ class ForceEAM : Force  {
       f = cof1 * funcfl.rhor[k-1] + cof2 * funcfl.rhor[k] + cof3 * funcfl.rhor[k+1] + cof4 * funcfl.rhor[k+2];
     }
 
-    for (f,m) in zip(z2r[2..], 2..) {
-      m -= 1;
-      r = (m - 1) * deltaPotential;
+    for (f,m) in zip(z2r[2..], 0..) {
+      r = m * deltaPotential;
       p = r / funcfl.deltaPotential + 1.0;
       k = p : int;
       k = min(k, funcfl.numPotentials - 2);
@@ -338,6 +335,7 @@ class ForceLJ : Force {
     fTimer.start();
     var eng, vir : atomic real;
     forall (b,p,c,r) in zip(Bins, RealPos, RealCount, binSpace) {
+      var t_eng, t_vir : real;
       for (a, x, j) in zip(b[1..c],p[1..c],1..c) {
         for(n,i) in a.neighs[1..a.ncount] {
           const del = x - Pos[n][i];
@@ -350,11 +348,15 @@ class ForceLJ : Force {
             a.f += del * force;
 
             if store {
-              eng.add(4.0 * sr6 * (sr6 - 1.0));
-              vir.add(.5 * rsq * force);
+              t_eng += (sr6 * (sr6 - 1.0));
+              t_vir += (rsq * force);
             }
           }
         }
+      }
+      if store {
+        eng.add(t_eng * 4.0);
+        vir.add(t_vir * .5);
       }
     }
 

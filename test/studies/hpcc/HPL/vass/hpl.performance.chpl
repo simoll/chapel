@@ -3,7 +3,6 @@
 // and Timing routines
 //
 use Norm, Random, Time;
-use /*utils,*/ UtilMath;
 
 //
 // Use the user module for computing HPCC problem sizes
@@ -379,11 +378,11 @@ proc schurComplement(blk, AD, BD, Rest) {
 proc DimensionalArr.dsiLocalSlice1((sliceDim1, sliceDim2)) {
   // might be more elegant to replace the explicit arg tuple with 'slice'
   proc toScalar(slice)
-    return if _isIntegralType(slice.type) then slice else slice.low;
+    return if isIntegralType(slice.type) then slice else slice.low;
   proc toRange(slice)
-    return if _isIntegralType(slice.type) then slice..slice else slice;
+    return if isIntegralType(slice.type) then slice..slice else slice;
   proc origScalar(param dim) param
-    return _isIntegralType(if dim==1 then sliceDim1.type else sliceDim2.type);
+    return isIntegralType(if dim==1 then sliceDim1.type else sliceDim2.type);
   proc toOrig(param dim, arg)
     return if origScalar(dim) then toScalar(arg) else toRange(arg);
 

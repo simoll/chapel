@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef CHPL_FLAGS_H_
 #define CHPL_FLAGS_H_
 
@@ -33,12 +52,14 @@ enum Flag {
 # define symbolFlag(NAME,PRAGMA,MAPNAME,COMMENT) NAME,
 # include "flags_list.h"
 # undef symbolFlag
-  NUM_FLAGS
+  NUM_FLAGS,
+  FLAG_FIRST = FLAG_UNKNOWN + 1, // index of the first flag
+  FLAG_LAST  = NUM_FLAGS - 1     // index of the last flag
 };
 
 // only meaningful flags are allowed
 #define CHECK_FLAG(FLAG) \
-  INT_ASSERT(FLAG_UNKNOWN < (FLAG) && (FLAG) < NUM_FLAGS)
+  INT_ASSERT(FLAG_FIRST <= (FLAG) && (FLAG) <= FLAG_LAST)
 
 
 Flag pragma2flag(const char* str);

@@ -27,8 +27,8 @@ proc main() {
 
   const ProblemSpace: domain(1, indexType) = {1..m};
 
-  const allExecTime: [LocaleSpace] [1..numTrials] real;
-  const allValidAnswer: [LocaleSpace] bool;
+  var   allExecTime: [LocaleSpace] [1..numTrials] real;
+  var   allValidAnswer: [LocaleSpace] bool;
   
   coforall loc in Locales {
     on loc {

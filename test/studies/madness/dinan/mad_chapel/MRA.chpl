@@ -544,9 +544,9 @@ class Function {
                 sum     += normf(box)**2;
                 ncoeffs += 1;
             }
-            if ncoeffs != 0 then
-                writeln("   level ", format("##", n), "   #boxes=",
-                        format("####", ncoeffs), "  norm=", format("%0.2e", truncate(sqrt(sum))));
+            if ncoeffs != 0 then 
+	        writef("   level %{##}   #boxes=%{####}  norm=%0.2er\n",
+		       n, ncoeffs, truncate(sqrt(sum)));
         }
 
         writeln("difference coefficients:");
@@ -557,8 +557,8 @@ class Function {
                 ncoeffs += 1;
             }
             if ncoeffs != 0 then
-                writeln("   level ", format("##", n), "   #boxes=",
-                        format("####", ncoeffs), "  norm=", format("%0.2e", truncate(sqrt(sum))));
+	        writef("   level %{##}   #boxes=%{####}  norm=%0.2er\n",
+		       n, ncoeffs, truncate(sqrt(sum)));
         }
 
         writeln("-----------------------------------------------------\n");
@@ -570,13 +570,12 @@ class Function {
      */
     proc evalNPT(npt) {
         for i in 0..npt {
-            var (fval, Fval) = (truncate(f(i/npt:real)), truncate(this(i/npt:real)));
-            //writeln(" -- ", format("%0.2f", i/npt:real), ":  F_numeric()=", format("% 0.5e", Fval),
-            //        "  f_analytic()=", format("% 0.5e", fval), " err=", format("% 0.5e", Fval-fval),
-            //        if abs(Fval-fval) > thresh then "  > thresh" else "");
-            writeln(" -- ", format("%0.2f", i/npt:real), ":  F_numeric()=", format("% 0.8f", Fval),
-                    "  f_analytic()=", format("% 0.8f", fval), " err=", format("% 0.1e", Fval-fval),
-                    if abs(Fval-fval) > thresh then "  > thresh" else "");
+	    // This truncation may lead to a loss of precision in the error calculation.
+            // var (fval, Fval) = (truncate(f(i/npt:real)), truncate(this(i/npt:real)));
+            var (fval, Fval) = (f(i/npt:real), this(i/npt:real));
+            writef(" -- %.2dr:  F_numeric()=% .8dr  f_analytic()=% .8dr err=% .8dr%s\n",
+		   i/npt:real, truncate(Fval), truncate(fval), truncate(Fval-fval), 
+		   if abs(Fval-fval) > thresh then "  > thresh" else "");
         }
     }
 }

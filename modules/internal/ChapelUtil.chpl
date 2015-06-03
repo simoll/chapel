@@ -1,8 +1,26 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 // ChapelUtil.chpl
 //
 // Internal data structures module
 //
-pragma "no use ChapelStandard"
 module ChapelUtil {
   
   param _INIT_STACK_SIZE = 8;
@@ -61,7 +79,7 @@ module ChapelUtil {
   //  overflow/underflow would occur for a + b
   //
   proc safeAdd(a: ?t, b: t) {
-    if !_isIntegralType(t) then
+    if !isIntegralType(t) then
       compilerError("Values must be of integral type.");
     if a < 0 {
       if b >= 0 {
@@ -91,7 +109,7 @@ module ChapelUtil {
   //  underflow/overflow would occur for a - b
   //
   proc safeSub(a: ?t, b: t) {
-    if !_isIntegralType(t) then
+    if !isIntegralType(t) then
       compilerError("Values must be of integral type.");
     if a < 0 {
       if b <= 0 {
@@ -116,7 +134,7 @@ module ChapelUtil {
       }
     } else {
       if b >= 0 {
-        if _isUnsignedType(t) then
+        if isUintType(t) then
           if b>a then return false;
         return true;
       } else {

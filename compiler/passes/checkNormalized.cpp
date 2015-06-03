@@ -1,9 +1,29 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 // checkNormalized.cpp
 
 #include "passes.h"
 
 #include "expr.h"
 #include "astutil.h"
+#include "stlUtil.h"
 
 
 static void checkFunctionSignatures();
@@ -20,7 +40,7 @@ checkNormalized(void) {
 static void checkFunctionSignatures()
 {
   forv_Vec(FnSymbol, fn, gFnSymbols) {
-    if (fn->hasFlag(FLAG_ITERATOR_FN)) {
+    if (fn->isIterator()) {
       if (fn->retTag == RET_TYPE)
         USR_FATAL_CONT(fn, "iterators may not yield or return types");
       if (fn->retTag == RET_PARAM)
@@ -30,9 +50,9 @@ static void checkFunctionSignatures()
       if (fn->retExprType)
         USR_FATAL_CONT(fn, "constructors may not declare a return type");
       for_formals(formal, fn) {
-        Vec<SymExpr*> symExprs;
+        std::vector<SymExpr*> symExprs;
         collectSymExprs(formal, symExprs);
-        forv_Vec(SymExpr, se, symExprs) {
+        for_vector(SymExpr, se, symExprs) {
           if (se->var == fn->_this) {
             USR_FATAL_CONT(se, "invalid access of class member in constructor header");
             break;

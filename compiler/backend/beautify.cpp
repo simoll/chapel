@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 /*****************************************************************************
 
 This code is based on beautify.cpp from the alpha version of the ZPL
@@ -196,7 +215,12 @@ void beautify(fileinfo* origfile) {
         sscanf(cp, ZLINEINPUTFORMAT, &zline, zname);
         znptr = strrchr(zname,'/');
         if (znptr != NULL) {
-          strcpy(zname,znptr+1);
+          // We can't use strcpy here because the source
+          // and destination strings can overlap.
+          char *src = znptr+1;
+          char *dst = zname;
+          size_t len = strlen(src) + 1; // also copy null
+          memmove(dst, src, len);
         }
         continue;
       }

@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef _QIO_STYLE_H_
 #define _QIO_STYLE_H_
 
@@ -28,6 +47,7 @@ typedef uint8_t style_char_t;
 #define QIO_STRING_FORMAT_CHPL 2
 #define QIO_STRING_FORMAT_JSON 3
 #define QIO_STRING_FORMAT_TOEND 4
+#define QIO_STRING_FORMAT_TOEOF 5
 
 #define QIO_COMPLEX_FORMAT_READ_ANY 0
 #define QIO_COMPLEX_FORMAT_READ_STRICT 0x10
@@ -96,6 +116,8 @@ typedef struct qio_style_s {
                                and nonprinting characters c = \uABCD
        QIO_STRING_FORMAT_TOEND string is as-is; reading reads until string_end;
                                returned string includes string_end.
+       QIO_STRING_FORMAT_TOEOF string is as-is; reading reads until EOF;
+                               returned string includes string_end.
      */
   uint8_t string_format;
 
@@ -124,14 +146,36 @@ typedef struct qio_style_s {
   uint8_t uppercase; // numeric stuff is uppercase
   uint8_t leftjustify; // 1 == left, 0 == right
 
-  // floating point options
-  uint8_t showpoint; // integer floating point values include a decimal point
-                     // with some level of precision (maybe just . or maybe .00000 for %g)
-  uint8_t showpointzero;  // integer floating point values get a .0
-                          // if they would otherwise have be printed without a .0
+  // more numeric options that make the most sense for floating point but
+  // also apply to integers. Thes only apply to printing (not reading).
+  uint8_t showpoint; // floating point values with no fractional portion
+                     // will get a decimal point
+                     // with some level of precision (maybe just . or maybe
+                     // .00000 for %g). This applies also to integers.
+                     // when reading, this number has no impact on floating
+                     // point values, but for integers it causes any \.0*
+                     // to be consumed after the number.
 
+  uint8_t showpointzero;  // floating point values with no fractional portion
+                          // get a .0 if they would otherwise have be printed
+                          // without a .0
+                          // Since this setting exists to distinguish
+                          // printed floating point values from printed
+                          // integers, it does not apply to integers. You could
+                          // use precision = 1 for that.
+                          // Also, it has no impact on numbers printed with
+                          // an exponent for the same reason.
+
+  // numeric printing and scanning choice
   int32_t precision; // for floating point, number after decimal point.
                      // or number of significant digits in realfmt 2.
+                     // for integers, this is always the number
+                     // of .000 zeros to print
+                     // when reading, this number has no impact on floating
+                     // point values, but for integers it causes any \.0*
+                     // to be consumed after the number when precision > 0.
+
+  // realfmt does not apply to integers.
   uint8_t realfmt; //0 -> print with %g; 1 -> print with %f; 2 -> print with %e
 
   // Other data type choices
@@ -231,7 +275,7 @@ qio_style_t qio_style_default(void)
 static inline
 void qio_style_copy(qio_style_t* dst, const qio_style_t* src)
 {
-  memcpy(dst, src, sizeof(qio_style_t));
+  qio_memcpy(dst, src, sizeof(qio_style_t));
 }
 
 static inline

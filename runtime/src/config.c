@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "chplrt.h"
 
 #include "arg.h"
@@ -309,7 +328,7 @@ void installConfigVar(const char* varName, const char* value,
                       const char* moduleName) {
   unsigned hashValue;
   configVarType* configVar = (configVarType*) 
-    chpl_mem_allocMany(1, sizeof(configVarType), CHPL_RT_MD_CONFIG_TABLE_DATA, 0, 0);
+    chpl_mem_allocMany(1, sizeof(configVarType), CHPL_RT_MD_CF_TABLE_DATA, 0, 0);
 
   hashValue = hash(varName);
   configVar->nextInBucket = configVarTable[hashValue]; 
@@ -377,7 +396,7 @@ int handlePossibleConfigVar(int* argc, char* argv[], int argnum,
   int retval = 0;
   int arglen = strlen(argv[argnum]+2)+1;
   char* argCopy = chpl_mem_allocMany(arglen, sizeof(char),
-                                     CHPL_RT_MD_CONFIG_ARG_COPY_DATA, argnum,
+                                     CHPL_RT_MD_CFG_ARG_COPY_DATA, argnum,
                                      "<command-line>");
   char* equalsSign;
   const char* moduleName;
@@ -469,6 +488,8 @@ chpl_bool chpl_config_has_value(c_string v, c_string m) {
 }
 
 
+// Returning a c_string here is thread-safe because config consts
+// are constant for the duration of the program.
 c_string chpl_config_get_value(c_string v, c_string m) { 
   return lookupSetValue(v, m);
 }

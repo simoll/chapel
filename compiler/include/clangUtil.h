@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef CLANGUTIL_H
 #define CLANGUTIL_H
 
@@ -12,6 +31,8 @@
 #include "llvmUtil.h"
 #include "clangSupport.h"
 #endif
+
+void cleanupExternC();
 
 #include "files.h"
 #include "genret.h"
@@ -84,6 +105,7 @@ class LayeredValueTable
     void addGlobalValue(llvm::StringRef name, GenRet gend);
     void addGlobalType(llvm::StringRef name, llvm::Type *type);
     void addGlobalCDecl(clang::NamedDecl* cdecl);
+    void addGlobalCDecl(llvm::StringRef name, clang::NamedDecl* cdecl);
     void addGlobalVarSymbol(llvm::StringRef name, VarSymbol* var);
     void addBlock(llvm::StringRef name, llvm::BasicBlock *block);
     GenRet getValue(llvm::StringRef name);

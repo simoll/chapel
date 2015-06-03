@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 // checkParsed.cpp
 
 #include "passes.h"
@@ -5,6 +24,7 @@
 #include "stmt.h"
 #include "expr.h"
 #include "astutil.h"
+#include "stlUtil.h"
 
 
 static void checkNamedArguments(CallExpr* call);
@@ -120,13 +140,13 @@ checkFunction(FnSymbol* fn) {
   if (fn->retTag == RET_PARAM && fn->retExprType != NULL)
     USR_WARN(fn, "providing an explicit return type on a 'param' function currently leads to incorrect results; as a workaround, remove the return type specification in function '%s'", fn->name);
 
-  Vec<CallExpr*> calls;
+  std::vector<CallExpr*> calls;
   collectMyCallExprs(fn, calls, fn);
-  bool isIterator = fn->hasFlag(FLAG_ITERATOR_FN);
+  bool isIterator = fn->isIterator();
   bool notInAFunction = !isIterator && (fn->getModule()->initFn == fn);
   int numVoidReturns = 0, numNonVoidReturns = 0, numYields = 0;
 
-  forv_Vec(CallExpr, call, calls) {
+  for_vector(CallExpr, call, calls) {
     if (call->isPrimitive(PRIM_RETURN)) {
       if (notInAFunction)
         USR_FATAL_CONT(call, "return statement is not in a function or iterator");
@@ -157,7 +177,7 @@ checkFunction(FnSymbol* fn) {
   if (isIterator && numYields == 0)
     USR_FATAL_CONT(fn, "iterator does not yield a value");
   if (!isIterator &&
-      fn->retTag == RET_VAR && 
+      fn->retTag == RET_REF &&
       numNonVoidReturns == 0) {
     USR_FATAL_CONT(fn, "function declared 'var' but does not return anything");
   }

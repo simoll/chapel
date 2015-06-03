@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ *
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ *
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef _SYMBOL_H_
 #define _SYMBOL_H_
 
@@ -7,6 +26,7 @@
 #include "type.h"
 
 #include <bitset>
+#include <iostream>
 #include <vector>
 
 //
@@ -22,9 +42,10 @@ class IteratorInfo;
 class Stmt;
 class SymExpr;
 
+// keep in sync with retTagDescrString()
 enum RetTag {
   RET_VALUE,
-  RET_VAR,
+  RET_REF,
   RET_PARAM,
   RET_TYPE
 };
@@ -37,8 +58,8 @@ const int INTENT_FLAG_PARAM = 0x10;
 const int INTENT_FLAG_TYPE  = 0x20;
 const int INTENT_FLAG_BLANK = 0x40;
 
-// If this enum is modified, ArgSymbol::intentDescrString should also be
-// updated to match
+// If this enum is modified, ArgSymbol::intentDescrString()
+// and intentDescrString(IntentTag) should also be updated to match
 enum IntentTag {
   INTENT_IN        = INTENT_FLAG_IN,
   INTENT_OUT       = INTENT_FLAG_OUT,
@@ -52,14 +73,17 @@ enum IntentTag {
   INTENT_BLANK     = INTENT_FLAG_BLANK
 };
 
+// keep in sync with modTagDescrString()
 enum ModTag {
   MOD_INTERNAL,  // an internal module that the user shouldn't know about
   MOD_STANDARD,  // a standard module from the Chapel libraries
   MOD_USER,      // a module found along the user's search path
-  MOD_MAIN       // a module from a file listed on the compiler command line
 };
 
 typedef std::bitset<NUM_FLAGS> FlagSet;
+
+// for task intents and forall intents, in createTaskFunctions.cpp
+ArgSymbol* tiMarkForIntent(IntentTag intent);
 
 
 /******************************** | *********************************
@@ -73,12 +97,12 @@ public:
   virtual GenRet     codegen();
   virtual bool       inTree();
   virtual Type*      typeInfo();
-  virtual void       verify(); 
+  virtual void       verify();
 
   // New interfaces
   virtual Symbol*    copy(SymbolMap* map      = NULL,
                           bool       internal = false)           = 0;
-  virtual void       replaceChild(BaseAST* oldAst, 
+  virtual void       replaceChild(BaseAST* oldAst,
                                   BaseAST* newAst)               = 0;
 
   virtual FnSymbol*  getFnSymbol();
@@ -87,6 +111,7 @@ public:
   virtual bool       isConstValWillNotChange()                 const;
   virtual bool       isImmediate()                             const;
   virtual bool       isParameter()                             const;
+          bool       isRenameable()                            const;
 
   virtual void       codegenDef();
 
@@ -106,7 +131,7 @@ public:
   DefExpr*           defPoint; // Point of definition
 
 protected:
-                     Symbol(AstTag      astTag, 
+                     Symbol(AstTag      astTag,
                             const char* init_name,
                             Type*       init_type = dtUnknown);
 
@@ -122,19 +147,50 @@ private:
 
 /******************************** | *********************************
 *                                                                   *
+* This class has two roles:                                         *
+*    1) A common abstract base class for VarSymbol and ArgSymbol.   *
+*    2) Maintain location state as an IPE "optimization".           *
 *                                                                   *
 ********************************* | ********************************/
 
-class VarSymbol : public Symbol {
- public:
+class LcnSymbol : public Symbol
+{
+public:
+  int       depth()                                            const;
+  int       offset()                                           const;
+
+  void      locationSet(int depth, int offset);
+
+protected:
+            LcnSymbol(AstTag      astTag,
+                      const char* initName,
+                      Type*       initType);
+
+  virtual  ~LcnSymbol();
+
+private:
+            LcnSymbol();
+
+  int       mDepth;                // Lexical depth relative to root
+  int       mOffset;               // Byte offset within frame
+};
+
+/******************************** | *********************************
+*                                                                   *
+*                                                                   *
+********************************* | ********************************/
+
+class VarSymbol : public LcnSymbol {
+public:
   // Note that string immediate values are stored
   // with C escapes - that is newline is 2 chars \ n
   Immediate   *immediate;
 
   //changed isconstant flag to reflect var, const, param: 0, 1, 2
   VarSymbol(const char* init_name, Type* init_type = dtUnknown);
-  ~VarSymbol();
-  void verify(); 
+  virtual ~VarSymbol();
+
+  void verify();
   virtual void    accept(AstVisitor* visitor);
   DECLARE_SYMBOL_COPY(VarSymbol);
   void replaceChild(BaseAST* old_ast, BaseAST* new_ast);
@@ -143,6 +199,7 @@ class VarSymbol : public Symbol {
   virtual bool       isConstValWillNotChange()                 const;
   virtual bool       isImmediate()                             const;
   virtual bool       isParameter()                             const;
+  virtual bool       isType()                                  const;
 
   const char* doc;
 
@@ -151,7 +208,15 @@ class VarSymbol : public Symbol {
   void codegenDef();
   // global vars are different ...
   void codegenGlobalDef();
-  
+
+  virtual void printDocs(std::ostream *file, unsigned int tabs);
+
+  void makeField();
+
+private:
+
+  virtual std::string docsDirective();
+  bool isField;
 };
 
 /******************************** | *********************************
@@ -159,19 +224,19 @@ class VarSymbol : public Symbol {
 *                                                                   *
 ********************************* | ********************************/
 
-class ArgSymbol : public Symbol {
+class ArgSymbol : public LcnSymbol {
 public:
   ArgSymbol(IntentTag   iIntent,
-            const char* iName, 
+            const char* iName,
             Type*       iType,
-            Expr*       iTypeExpr     = NULL, 
+            Expr*       iTypeExpr     = NULL,
             Expr*       iDefaultExpr  = NULL,
             Expr*       iVariableExpr = NULL);
 
   // Interface for BaseAST
   virtual GenRet  codegen();
 
-  virtual void    verify(); 
+  virtual void    verify();
   virtual void    accept(AstVisitor* visitor);
   DECLARE_SYMBOL_COPY(ArgSymbol);
 
@@ -224,7 +289,7 @@ class TypeSymbol : public Symbol {
 #endif
 
   TypeSymbol(const char* init_name, Type* init_type);
-  void verify(); 
+  void verify();
   virtual void    accept(AstVisitor* visitor);
   DECLARE_SYMBOL_COPY(TypeSymbol);
   void replaceChild(BaseAST* old_ast, BaseAST* new_ast);
@@ -234,6 +299,8 @@ class TypeSymbol : public Symbol {
   // This function is used to code generate the LLVM TBAA metadata
   // after all of the types have been defined.
   void codegenMetadata();
+
+  const char* doc;
 };
 
 /******************************** | *********************************
@@ -267,7 +334,7 @@ class FnSymbol : public Symbol {
                            // resolve and used in cullOverReferences)
   int codegenUniqueNum;
   const char *doc;
-  
+
   /// Used to keep track of symbol substitutions during partial copying.
   SymbolMap partialCopyMap;
   /// Source of a partially copied function.
@@ -277,49 +344,65 @@ class FnSymbol : public Symbol {
   /// Number of formals before tuple type constructor formals are added.
   int numPreTupleFormals;
 
-  FnSymbol(const char* initName);
-  ~FnSymbol();
-           
-  void verify(); 
+                  FnSymbol(const char* initName);
+                 ~FnSymbol();
+
+  void            verify();
   virtual void    accept(AstVisitor* visitor);
+
   DECLARE_SYMBOL_COPY(FnSymbol);
-  FnSymbol* copyInnerCore(SymbolMap* map);
-  FnSymbol* getFnSymbol(void);
-  void replaceChild(BaseAST* old_ast, BaseAST* new_ast);
-  
-  FnSymbol* partialCopy(SymbolMap* map);
-  void finalizeCopy(void);
-  
+
+  FnSymbol*       copyInnerCore(SymbolMap* map);
+  FnSymbol*       getFnSymbol(void);
+  void            replaceChild(BaseAST* old_ast, BaseAST* new_ast);
+
+  FnSymbol*       partialCopy(SymbolMap* map);
+  void            finalizeCopy();
+
   // Returns an LLVM type or a C-cast expression
-  GenRet codegenFunctionType(bool forHeader);
-  GenRet codegenCast(GenRet fnPtr);
+  GenRet          codegenFunctionType(bool forHeader);
+  GenRet          codegenCast(GenRet fnPtr);
 
-  void codegenHeaderC();
-  void codegenPrototype();
-  void codegenDef();
-  GenRet codegen();
+  GenRet          codegen();
+  void            codegenHeaderC();
+  void            codegenPrototype();
+  void            codegenDef();
 
-  void printDef(FILE* outfile);
+  void            printDef(FILE* outfile);
 
-  void insertAtHead(Expr* ast);
-  void insertAtTail(Expr* ast);
-  void insertAtHead(const char* format, ...);
-  void insertAtTail(const char* format, ...);
+  void            insertAtHead(Expr* ast);
+  void            insertAtHead(const char* format, ...);
 
-  void insertBeforeReturn(Expr* ast);
-  void insertBeforeReturnAfterLabel(Expr* ast);
-  void insertBeforeDownEndCount(Expr* ast);
+  void            insertAtTail(Expr* ast);
+  void            insertAtTail(const char* format, ...);
 
-  void insertFormalAtHead(BaseAST* ast);
-  void insertFormalAtTail(BaseAST* ast);
+  void            insertBeforeReturn(Expr* ast);
+  void            insertBeforeReturnAfterLabel(Expr* ast);
+  void            insertBeforeDownEndCount(Expr* ast,
+                                           bool descendLocalBlocks = false);
 
-  Symbol* getReturnSymbol();
+  void            insertFormalAtHead(BaseAST* ast);
+  void            insertFormalAtTail(BaseAST* ast);
 
-  int numFormals();
-  ArgSymbol* getFormal(int i); // return ith formal
+  Symbol*         getReturnSymbol();
+  Symbol*         replaceReturnSymbol(Symbol* newRetSymbol, Type* newRetType);
 
-  bool tag_generic();
-  bool isResolved() { return this->hasFlag(FLAG_RESOLVED); }
+  int             numFormals()                                 const;
+  ArgSymbol*      getFormal(int i); // return ith formal
+
+  void            collapseBlocks();
+
+  bool            tag_generic();
+  bool            isResolved()                                 const;
+  bool            isMethod()                                   const;
+  bool            isPrimaryMethod()                            const;
+  bool            isSecondaryMethod()                          const;
+  bool            isIterator()                                 const;
+
+  virtual void printDocs(std::ostream *file, unsigned int tabs);
+
+private:
+  virtual std::string docsDirective();
 };
 
 /******************************** | *********************************
@@ -331,14 +414,14 @@ class EnumSymbol : public Symbol {
  public:
                   EnumSymbol(const char* initName);
 
-  virtual void    verify(); 
+  virtual void    verify();
   virtual void    accept(AstVisitor* visitor);
 
   DECLARE_SYMBOL_COPY(EnumSymbol);
 
   virtual void    replaceChild(BaseAST* oldAst, BaseAST* newAst);
   virtual void    codegenDef();
-  
+
   virtual bool    isParameter()                             const;
 
   Immediate*      getImmediate();
@@ -360,7 +443,7 @@ public:
                       ~ModuleSymbol();
 
   // Interface to BaseAST
-  virtual void         verify(); 
+  virtual void         verify();
   virtual void         accept(AstVisitor* visitor);
 
   DECLARE_SYMBOL_COPY(ModuleSymbol);
@@ -372,10 +455,11 @@ public:
   // New interface
   Vec<AggregateType*>  getTopLevelClasses();
   Vec<VarSymbol*>      getTopLevelConfigVars();
+  Vec<VarSymbol*>      getTopLevelVariables();
   Vec<FnSymbol*>       getTopLevelFunctions(bool includeExterns);
   Vec<ModuleSymbol*>   getTopLevelModules();
 
-  void                 moduleUseAddChapelStandard();
+  void                 addDefaultUses();
   void                 moduleUseAdd(ModuleSymbol* module);
   void                 moduleUseRemove(ModuleSymbol* module);
 
@@ -391,6 +475,16 @@ public:
 
   // LLVM uses this for extern C blocks.
   ExternBlockInfo*     extern_info;
+
+  virtual void         printDocs(std::ostream *file, unsigned int tabs);
+          void         addPrefixToName(std::string prefix);
+          std::string  docsName();
+
+private:
+  void                 getTopLevelConfigOrVariables(Vec<VarSymbol *> *contain, Expr *expr, bool config);
+
+  // Used when documenting submodules.
+  std::string          moduleNamePrefix;
 };
 
 /******************************** | *********************************
@@ -402,7 +496,7 @@ class LabelSymbol : public Symbol {
  public:
   GotoStmt* iterResumeGoto;
   LabelSymbol(const char* init_name);
-  void verify(); 
+  void verify();
   virtual void    accept(AstVisitor* visitor);
   DECLARE_SYMBOL_COPY(LabelSymbol);
   void replaceChild(BaseAST* old_ast, BaseAST* new_ast);
@@ -427,15 +521,21 @@ VarSymbol *new_IntSymbol(int64_t b, IF1_int_type size=INT_SIZE_64);
 VarSymbol *new_UIntSymbol(uint64_t b, IF1_int_type size=INT_SIZE_64);
 
 // Creates a new real literal with the given value and bit-width.
-// n is used for the cname of the new symbol,
-// but only if the value has not already been cached.
-VarSymbol *new_RealSymbol(const char *n, long double b,
+// n should be a string argument containing a Chapel decimal or hexadecimal
+// floating point literal. It will be copied and the floating point
+// value will be computed. The resulting symbol will have a cname
+// equal to a fixed-up n, or to an n previously passed to this
+// function that has the same value.
+VarSymbol *new_RealSymbol(const char *n,
                           IF1_float_type size=FLOAT_SIZE_64);
 
 // Creates a new imaginary literal with the given value and bit-width.
-// n is used for the cname of the new symbol,
-// but only if the value has not already been cached.
-VarSymbol *new_ImagSymbol(const char *n, long double b,
+// n should be a string argument containing a Chapel decimal or hexadecimal
+// floating point literal. It will be copied and the floating point
+// value will be computed. The resulting symbol will have a cname
+// equal to a fixed-up n, or to an n previously passed to this
+// function that has the same value.
+VarSymbol *new_ImagSymbol(const char *n,
                           IF1_float_type size=FLOAT_SIZE_64);
 
 // Creates a new complex literal with the given value and bit-width.
@@ -450,6 +550,11 @@ FlagSet getRecordWrappedFlags(Symbol* s);
 FlagSet getSyncFlags(Symbol* s);
 VarSymbol* newTemp(const char* name = NULL, Type* type = dtUnknown);
 VarSymbol* newTemp(Type* type);
+
+// for use in an English sentence
+const char* retTagDescrString(RetTag retTag);
+const char* modTagDescrString(ModTag modTag);
+const char* intentDescrString(IntentTag intent);
 
 // Return true if the arg must use a C pointer whether or not
 // pass-by-reference intents are used.
@@ -470,11 +575,12 @@ extern Symbol *gNil;
 extern Symbol *gUnknown;
 extern Symbol *gMethodToken;
 extern Symbol *gTypeDefaultToken;
-extern Symbol *gLeaderTag, *gFollowerTag;
+extern Symbol *gLeaderTag, *gFollowerTag, *gStandaloneTag;
 extern Symbol *gModuleToken;
 extern Symbol *gNoInit;
 extern Symbol *gVoid;
 extern Symbol *gStringC;
+extern Symbol *gStringCopy;
 extern Symbol *gFile;
 extern Symbol *gOpaque;
 extern Symbol *gTimer;
@@ -483,6 +589,7 @@ extern VarSymbol *gTrue;
 extern VarSymbol *gFalse;
 extern VarSymbol *gTryToken; // try token for conditional function resolution
 extern VarSymbol *gBoundsChecking;
+extern VarSymbol *gCastChecking;
 extern VarSymbol *gPrivatization;
 extern VarSymbol *gLocal;
 extern VarSymbol *gNodeID;

@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef _chpltypes_H_
 #define _chpltypes_H_
 
@@ -6,6 +25,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h> // for ptrdiff_t
 #include <sys/time.h> // for struct timeval
 
 // C types usable from Chapel.
@@ -23,6 +43,9 @@ typedef unsigned long long c_ulonglong;
 typedef float c_float;
 typedef double c_double;
 typedef void* c_void_ptr;
+typedef uintptr_t c_uintptr;
+typedef intptr_t c_intptr;
+typedef ptrdiff_t c_ptrdiff;
 
 // C++ does not support c99 bools
 #ifndef __cplusplus

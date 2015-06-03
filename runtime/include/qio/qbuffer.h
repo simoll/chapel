@@ -1,9 +1,33 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef _QBUFFER_H_
 #define _QBUFFER_H_
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// This macro set to obtain the portable format macro PRIu64 for debug output.
+#define __STDC_FORMAT_MACROS 1
+// This macro set to obtain SIZE_MAX
+#define __STDC_LIMIT_MACROS 1
 
 #include "sys_basic.h"
 #include "qio_error.h"
@@ -12,9 +36,17 @@ extern "C" {
 #endif
 #include "chpl-atomics.h"
 
-// This macro set to obtain the portable format macro PRIu64 for debug output.
-#define __STDC_FORMAT_MACROS 1
 #include <inttypes.h>
+#include <stdint.h>
+
+// Last resort way to get SIZE_MAX. This should be correct,
+// but we'd rather use the system's definition... which should
+// theoretically be provided by the above (__STDC_LIMIT_MACROS+stdint.h)
+// but that isn't happening for me on GCC 4.7.2 when this file is included
+// by a C++ program.
+#ifndef SIZE_MAX
+#define SIZE_MAX (~((size_t)0))
+#endif
 
 #include <sys/uio.h>
 #include "deque.h"
@@ -431,6 +463,7 @@ qioerr qbuffer_memset(qbuffer_t* buf, qbuffer_iter_t start, qbuffer_iter_t end, 
 #define qio_calloc(nmemb, size) chpl_mem_allocManyZero(nmemb, size, CHPL_RT_MD_IO_BUFFER, __LINE__, __FILE__)
 #define qio_realloc(ptr, size) chpl_mem_realloc(ptr, size, CHPL_RT_MD_IO_BUFFER, __LINE__, __FILE__)
 #define qio_free(ptr) chpl_mem_free(ptr, __LINE__, __FILE__)
+#define qio_memcpy(dest, src, num) chpl_memcpy(dest, src, num)
 
 static inline char* qio_strdup(const char* ptr)
 {
@@ -449,23 +482,32 @@ typedef chpl_bool qio_bool;
 #define qio_free(ptr) free(ptr)
 #define sys_free(ptr) free(ptr)
 #define qio_strdup(ptr) strdup(ptr)
+#define qio_memcpy(dest, src, num) memcpy(dest, src, num)
 
 typedef bool qio_bool;
 
 #endif
 
-// Declare MAX_ON_STACK bytes. We declare it as uint64_t to
-// make sure it's aligned as well as malloc would be.
+// Declare MAX_ON_STACK bytes. We declare it with the original
+// type to make sure it's aligned as well as malloc would be.
 #define MAYBE_STACK_SPACE(type,onstack) \
   type onstack[MAX_ON_STACK/sizeof(type)]
 
 #define MAYBE_STACK_ALLOC(type, count, ptr, onstack) \
 { \
-  size_t size = count * sizeof(type); \
-  if( size <= sizeof(onstack) ) { \
-    ptr = onstack; \
+  /* check for integer overflow or negative count */ \
+  if( count >= 0 && \
+      (uint64_t) count <= (SIZE_MAX / sizeof(type)) ) { \
+    /* check that count is positive and small enough to go on the stack */ \
+    if( (size_t) count <= (sizeof(onstack)/sizeof(type)) ) { \
+      ptr = onstack; \
+    } else { \
+      ptr = (type*) qio_malloc(count*sizeof(type)); \
+    } \
   } else { \
-    ptr = (type*) qio_malloc(size); \
+    /* handle integer overflow */ \
+    ptr = NULL; \
+    assert(0 && "size overflow in MAYBE_STACK_ALLOC"); \
   } \
 }
 
@@ -477,9 +519,38 @@ typedef bool qio_bool;
   } \
 }
 
-#define VOID_PTR_DIFF(a,b) (((intptr_t) (a)) - ((intptr_t) (b)))
-#define VOID_PTR_ADD(ptr,amt) ((void*)(((char*) (ptr)) + (amt)))
-#define VOID_PTR_ALIGN(ptr,align) (((uintptr_t)ptr) & (align - 1))
+/* Returns the difference between two pointers,
+   but returns 0 if either pointer is NULL.
+ */
+static inline intptr_t qio_ptr_diff(void* a, void* b)
+{
+  if( a == NULL || b == NULL ) return 0;
+  return ((intptr_t)a) - ((intptr_t)b);
+}
+
+/* Returns 1 if there is space for nbytes between cur and end
+   (cur might represent a current buffer position and end might
+    represent the boundary.)
+   Takes into account the possibility that cur or end might be NULL;
+   returns 0 if either is NULL and nbytes > 0.
+    */
+static inline int qio_space_in_ptr_diff(intptr_t nbytes, void* end, void* cur)
+{
+  return nbytes <= qio_ptr_diff(end,cur);
+}
+
+static inline void* qio_ptr_add(void* ptr, intptr_t amt)
+{
+  return ((void*)(((char*) (ptr)) + (amt)));
+}
+
+/* Returns the number of bytes between ptr and its alignment.
+   align must be a power of 2.
+ */
+static inline uintptr_t qio_ptr_align(void* ptr, uintptr_t align)
+{
+ return (((uintptr_t)ptr) & (align - 1));
+}
 
 #ifdef __cplusplus
 } // end extern "C"

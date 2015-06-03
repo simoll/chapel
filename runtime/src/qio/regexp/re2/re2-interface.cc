@@ -11,11 +11,11 @@
 extern "C" {
   #include <stdlib.h>
   #include <stdio.h>
-#ifndef SIMPLE_TEST
+#ifndef CHPL_RT_UNIT_TEST
   #include "stdchplrt.h"
 #endif
   #include "qio_regexp.h"
-  #include "qbuffer.h" // qio_strdup, refcount functions, VOID_PTR_DIFF
+  #include "qbuffer.h" // qio_strdup, refcount functions, qio_ptr_diff, etc
   #include "qio.h" // for channel operations
   #undef printf
 }
@@ -211,7 +211,7 @@ void qio_regexp_create_compile_flags(const char* str, int64_t str_len, const cha
   return qio_regexp_create_compile(str, str_len, &opt, compiled);
 }
 
-void qio_regexp_retain(qio_regexp_t* compiled)
+void qio_regexp_retain(const qio_regexp_t* compiled)
 {
   re_t* re = (re_t*) compiled->regexp;
   //fprintf(stdout, "Retain %p\n", re);
@@ -226,31 +226,31 @@ void qio_regexp_release(qio_regexp_t* compiled)
   compiled->regexp = NULL;
 }
 
-void qio_regexp_get_options(qio_regexp_t* regexp, qio_regexp_options_t* options)
+void qio_regexp_get_options(const qio_regexp_t* regexp, qio_regexp_options_t* options)
 {
   RE2* re2 = (RE2*) regexp->regexp;
   const RE2::Options& opts = re2->options();
   re2_options_to_qio_re_options(&opts, options);
 }
 
-void qio_regexp_get_pattern(qio_regexp_t* regexp, const char** pattern)
+void qio_regexp_get_pattern(const qio_regexp_t* regexp, const char** pattern)
 {
   RE2* re2 = (RE2*) regexp->regexp;
   *pattern = qio_strdup(re2->pattern().c_str());
 }
 
-int64_t qio_regexp_get_ncaptures(qio_regexp_t* regexp)
+int64_t qio_regexp_get_ncaptures(const qio_regexp_t* regexp)
 {
   RE2* re2 = (RE2*) regexp->regexp;
   return re2->NumberOfCapturingGroups();
 }
-qio_bool qio_regexp_ok(qio_regexp_t* regexp)
+qio_bool qio_regexp_ok(const qio_regexp_t* regexp)
 {
   RE2* re2 = (RE2*) regexp->regexp;
   return re2->ok();
 }
 
-const char* qio_regexp_error(qio_regexp_t* regexp)
+const char* qio_regexp_error(const qio_regexp_t* regexp)
 {
   RE2* re2 = (RE2*) regexp->regexp;
   return qio_strdup(re2->error().c_str());
@@ -264,6 +264,10 @@ qio_bool qio_regexp_match(qio_regexp_t* regexp, const char* text, int64_t text_l
   MAYBE_STACK_SPACE(StringPiece, onstack);
   StringPiece* spPtr;
   RE2* re = (RE2*) regexp->regexp;
+
+  // RE2 uses int for ncaptures
+  if( nsubmatch > INT_MAX || nsubmatch < 0 )
+    return false;
 
   if( anchor == QIO_REGEXP_ANCHOR_UNANCHORED ) ranchor = RE2::UNANCHORED;
   else if( anchor == QIO_REGEXP_ANCHOR_START ) ranchor = RE2::ANCHOR_START;
@@ -281,7 +285,7 @@ qio_bool qio_regexp_match(qio_regexp_t* regexp, const char* text, int64_t text_l
     } else {
       intptr_t diff = 0;
       if( ! spPtr[i].empty() ) {
-        diff = VOID_PTR_DIFF(spPtr[i].data(), textp.data());
+        diff = qio_ptr_diff((void*) spPtr[i].data(), (void*) textp.data());
         assert( diff >= 0 && diff <= endpos );
       }
       submatch[i].offset = diff;
@@ -360,7 +364,7 @@ void qio_regexp_channel_discard(qio_channel_s* ch, int64_t cur, int64_t min)
 }
 
 
-qioerr qio_regexp_channel_match(qio_regexp_t* regexp, const int threadsafe, struct qio_channel_s* ch, int64_t maxlen, int anchor, qio_bool can_discard, qio_bool keep_unmatched, qio_bool keep_whole_pattern, qio_regexp_string_piece_t* captures, int64_t ncaptures)
+qioerr qio_regexp_channel_match(const qio_regexp_t* regexp, const int threadsafe, struct qio_channel_s* ch, int64_t maxlen, int anchor, qio_bool can_discard, qio_bool keep_unmatched, qio_bool keep_whole_pattern, qio_regexp_string_piece_t* captures, int64_t ncaptures)
 {
   RE2* re = (RE2*) regexp->regexp;
   qioerr err;
@@ -380,6 +384,9 @@ qioerr qio_regexp_channel_match(qio_regexp_t* regexp, const int threadsafe, stru
   int i;
   int use_captures = ncaptures;
   MAYBE_STACK_SPACE(FilePiece, caps_onstack);
+
+  if( ncaptures > INT_MAX || ncaptures < 0 )
+    QIO_GET_CONSTANT_ERROR(err, EINVAL, "invalid number of captures");
 
   start_offset = offset = qio_channel_offset_unlocked(ch);
   end_offset = qio_channel_end_offset_unlocked(ch);
@@ -438,12 +445,12 @@ qioerr qio_regexp_channel_match(qio_regexp_t* regexp, const int threadsafe, stru
 
   // We never call end_peek_cached. (should be OK since we do unlock)
  
-  if( VOID_PTR_DIFF(bufend, bufstart) > maxlen ) {
-    bufend = VOID_PTR_ADD(bufstart, maxlen);
+  if( qio_ptr_diff(bufend, bufstart) > maxlen ) {
+    bufend = qio_ptr_add(bufstart, maxlen);
   }
 
   // Construct the StringPiece for the buffer.
-  buffer.set((const char*) bufstart, VOID_PTR_DIFF(bufend, bufstart));
+  buffer.set((const char*) bufstart, qio_ptr_diff(bufend, bufstart));
   // and the qio_channel_string_piece
   text.set_channel_info(&ci, start_offset, end);
 

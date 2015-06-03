@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //
 // The Block distribution is defined with six classes:
 //
@@ -247,7 +266,8 @@ proc Block.Block(boundingBox: domain,
   // NOTE: When these knobs stop using the global defaults, we will need
   // to add checks to make sure dataParTasksPerLocale<0 and
   // dataParMinGranularity<0
-  this.dataParTasksPerLocale = if dataParTasksPerLocale==0 then here.numCores
+  this.dataParTasksPerLocale = if dataParTasksPerLocale==0
+                               then here.maxTaskPar
                                else dataParTasksPerLocale;
   this.dataParIgnoreRunningTasks = dataParIgnoreRunningTasks;
   this.dataParMinGranularity = dataParMinGranularity;
@@ -634,7 +654,9 @@ iter BlockDom.these(param tag: iterKind, followThis) where tag == iterKind.follo
       return if i == rangeTuple.size then rangeTuple(i).stridable
              else rangeTuple(i).stridable || anyStridable(rangeTuple, i+1);
 
-  chpl__testPar("Block domain follower invoked on ", followThis);
+  if chpl__testParFlag then
+    chpl__testPar("Block domain follower invoked on ", followThis);
+
   var t: rank*range(idxType, stridable=stridable||anyStridable(followThis));
   type strType = chpl__signedType(idxType);
   for param i in 1..rank {
@@ -824,7 +846,7 @@ inline proc _remoteAccessData.getDataIndex(param stridable, ind: rank*idxType) {
 }
 
 
-inline proc BlockArr.dsiLocalAccess(i: rank*idxType) var {
+inline proc BlockArr.dsiLocalAccess(i: rank*idxType) ref {
   return myLocArr.this(i);
 }
 
@@ -833,7 +855,7 @@ inline proc BlockArr.dsiLocalAccess(i: rank*idxType) var {
 //
 // TODO: Do we need a global bounds check here or in targetLocsIdx?
 //
-proc BlockArr.dsiAccess(i: rank*idxType) var {
+proc BlockArr.dsiAccess(i: rank*idxType) ref {
   local {
     if myLocArr != nil && myLocArr.locDom.member(i) then
       return myLocArr.this(i);
@@ -875,10 +897,10 @@ proc BlockArr.dsiAccess(i: rank*idxType) var {
   return locArr(dom.dist.targetLocsIdx(i))(i);
 }
 
-proc BlockArr.dsiAccess(i: idxType...rank) var
+proc BlockArr.dsiAccess(i: idxType...rank) ref
   return dsiAccess(i);
 
-iter BlockArr.these() var {
+iter BlockArr.these() ref {
   for i in dom do
     yield dsiAccess(i);
 }
@@ -902,15 +924,17 @@ proc BlockArr.dsiDynamicFastFollowCheck(lead: [])
 proc BlockArr.dsiDynamicFastFollowCheck(lead: domain)
   return lead._value == this.dom;
 
-iter BlockArr.these(param tag: iterKind, followThis, param fast: bool = false) var where tag == iterKind.follower {
+iter BlockArr.these(param tag: iterKind, followThis, param fast: bool = false) ref where tag == iterKind.follower {
   proc anyStridable(rangeTuple, param i: int = 1) param
       return if i == rangeTuple.size then rangeTuple(i).stridable
              else rangeTuple(i).stridable || anyStridable(rangeTuple, i+1);
 
-  if fast then
-    chpl__testPar("Block array fast follower invoked on ", followThis);
-  else
-    chpl__testPar("Block array non-fast follower invoked on ", followThis);
+  if chpl__testParFlag {
+    if fast then
+      chpl__testPar("Block array fast follower invoked on ", followThis);
+    else
+      chpl__testPar("Block array non-fast follower invoked on ", followThis);
+  }
 
   if testFastFollowerOptimization then
     writeln((if fast then "fast" else "regular") + " follower invoked for Block array");
@@ -950,7 +974,7 @@ iter BlockArr.these(param tag: iterKind, followThis, param fast: bool = false) v
     //
     // we don't necessarily own all the elements we're following
     //
-    proc accessHelper(i) var {
+    proc accessHelper(i) ref {
       if myLocArr then local {
         if myLocArr.locDom.member(i) then
           return myLocArr.this(i);
@@ -996,7 +1020,7 @@ proc BlockArr.dsiSerialWrite(f: Writer) {
 }
 
 proc BlockArr.dsiSlice(d: BlockDom) {
-  var alias = new BlockArr(eltType=eltType, rank=rank, idxType=idxType, stridable=d.stridable, dom=d, pid=pid);
+  var alias = new BlockArr(eltType=eltType, rank=rank, idxType=idxType, stridable=d.stridable, dom=d);
   var thisid = this.locale.id;
   coforall i in d.dist.targetLocDom {
     on d.dist.targetLocales(i) {
@@ -1170,7 +1194,7 @@ proc BlockArr.setRADOpt(val=true) {
 //
 // the accessor for the local array -- assumes the index is local
 //
-proc LocBlockArr.this(i) var {
+proc LocBlockArr.this(i) ref {
   return myElems(i);
 }
 
@@ -1362,10 +1386,6 @@ proc BlockArr.doiBulkTransfer(B) {
   }
   if debugBlockDistBulkTransfer then writeln("Comms:",getCommDiagnostics());
 }
-    
-proc BlockArr.dsiTargetLocDom() {
-  return dom.dist.targetLocDom;
-}
 
 proc BlockArr.dsiTargetLocales() {
   return dom.dist.targetLocales;
@@ -1373,11 +1393,11 @@ proc BlockArr.dsiTargetLocales() {
 
 // Block subdomains are continuous
 
-proc BlockArr.dsiOneLocalSubdomain() param return true;
+proc BlockArr.dsiHasSingleLocalSubdomain() param return true;
 
 // returns the current locale's subdomain
 
-proc BlockArr.dsiGetLocalSubdomain() {
+proc BlockArr.dsiLocalSubdomain() {
   return myLocArr.locDom.myBlock;
 }
 

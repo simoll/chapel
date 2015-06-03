@@ -4,7 +4,7 @@ use DimensionalDist2D; //DIM
 use ReplicatedDim; //BD //BC (for 1-d replicated, 1-d block)
 //use BlockDim;
 use BlockCycDim; //BC (with DIM)
-use UtilMath, Time, Random;
+use Time, Random;
 
 config param reproducible = false;
 config var verbose = true;
@@ -200,7 +200,7 @@ proc initABref() {
   else if useRandomSeed then
     writeln("initABref is using a random seed");
 
-  if _isIntegralType(elemType) {
+  if isIntegralType(elemType) {
 
     var Abtemp: [MatVectSpace] real;
     fillRandom(Abtemp, seed);

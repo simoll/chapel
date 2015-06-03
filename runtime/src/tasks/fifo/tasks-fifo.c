@@ -1,11 +1,25 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //
 // FIFO implementation of Chapel tasking interface
 //
-
-#ifdef __OPTIMIZE__
-// Turn assert() into a no op if the C compiler defines the macro above.
-#define NDEBUG
-#endif
 
 #include "chplrt.h"
 #include "chpl_rt_utils_static.h"
@@ -176,9 +190,11 @@ static void sync_wait_and_lock(chpl_sync_aux_t *s,
 
   chpl_thread_mutexLock(&s->lock);
 
-  // If true, we want to use conditionals, otherwise we want to spin
+  // If we're oversubscribing the hardware, we wait using conditionals
+  // in order to ensure fairness and thus progress.  If we're not, we
+  // can spin-wait.
   suspend_using_cond = (chpl_thread_getNumThreads() >=
-                        chpl_numCoresOnThisLocale());
+                        chpl_getNumLogicalCpus(true));
 
   while (s->is_full != want_full) {
     if (!suspend_using_cond) {
@@ -297,7 +313,20 @@ void chpl_sync_initAux(chpl_sync_aux_t *s) {
   chpl_thread_condvar_init(&s->signal_empty);
 }
 
-void chpl_sync_destroyAux(chpl_sync_aux_t *s) { }
+static void chpl_thread_condvar_destroy(chpl_thread_condvar_t* cv) {
+  if(pthread_cond_broadcast((pthread_cond_t*) cv))
+    chpl_internal_error("pthread_cond_broadcast() failed, cv was uninitialized");
+  if (pthread_cond_destroy((pthread_cond_t*) cv))
+    chpl_internal_error("pthread_cond_destroy() failed");
+}
+
+void chpl_sync_destroyAux(chpl_sync_aux_t *s) {
+  chpl_thread_mutexLock(&s->lock);
+  chpl_thread_condvar_destroy(&s->signal_full);
+  chpl_thread_condvar_destroy(&s->signal_empty);
+  chpl_thread_mutexUnlock(&s->lock);
+  chpl_thread_mutexDestroy(&s->lock);
+}
 
 // Tasks
 
@@ -330,11 +359,11 @@ void chpl_task_init(void) {
     thread_private_data_t* tp;
 
     tp = (thread_private_data_t*) chpl_mem_alloc(sizeof(thread_private_data_t),
-                                                 CHPL_RT_MD_THREAD_PRIVATE_DATA,
+                                                 CHPL_RT_MD_THREAD_PRV_DATA,
                                                  0, 0);
 
     tp->ptask = (task_pool_p) chpl_mem_alloc(sizeof(task_pool_t),
-                                             CHPL_RT_MD_TASK_POOL_DESCRIPTOR,
+                                             CHPL_RT_MD_TASK_POOL_DESC,
                                              0, 0);
     tp->ptask->id           = get_next_task_id();
     tp->ptask->fun          = NULL;
@@ -427,11 +456,11 @@ static void comm_task_wrapper(void* arg) {
   thread_private_data_t* tp;
 
   tp = (thread_private_data_t*) chpl_mem_alloc(sizeof(thread_private_data_t),
-                                               CHPL_RT_MD_THREAD_PRIVATE_DATA,
+                                               CHPL_RT_MD_THREAD_PRV_DATA,
                                                0, 0);
 
   tp->ptask = (task_pool_p) chpl_mem_alloc(sizeof(task_pool_t),
-                                           CHPL_RT_MD_TASK_POOL_DESCRIPTOR,
+                                           CHPL_RT_MD_TASK_POOL_DESC,
                                            0, 0);
   tp->ptask->id           = get_next_task_id();
   tp->ptask->fun          = comm_task_fn;
@@ -471,7 +500,7 @@ void chpl_task_addToTaskList(chpl_fn_int_t fid, void* arg,
     chpl_task_list_p ltask;
 
     ltask = (chpl_task_list_p) chpl_mem_alloc(sizeof(struct chpl_task_list),
-                                              CHPL_RT_MD_TASK_LIST_DESCRIPTOR,
+                                              CHPL_RT_MD_TASK_LIST_DESC,
                                               0, 0);
     ltask->filename = filename;
     ltask->lineno   = lineno;
@@ -759,7 +788,7 @@ void chpl_task_startMovedTask(chpl_fn_p fp,
 
   pmtwd = (movedTaskWrapperDesc_t*)
           chpl_mem_alloc(sizeof(*pmtwd),
-                         CHPL_RT_MD_THREAD_PRIVATE_DATA,
+                         CHPL_RT_MD_THREAD_PRV_DATA,
                          0, 0);
   *pmtwd = (movedTaskWrapperDesc_t)
            { fp, a, canCountRunningTasks,
@@ -824,12 +853,26 @@ void chpl_task_setSerial(chpl_bool state) {
   get_current_ptask()->chpl_data.prvdata.serial_state = state;
 }
 
+uint32_t chpl_task_getMaxPar(void) {
+  uint32_t max;
+  uint32_t maxThreads;
+
+  //
+  // We expect that even if the physical CPUs have multiple hardware
+  // threads, cache and pipeline conflicts will typically prevent
+  // applications from gaining by using them.  So, we just return the
+  // lesser of the number of physical CPUs and whatever the threading
+  // layer says it can do.
+  //
+  max = (uint32_t) chpl_getNumPhysicalCpus(true);
+  maxThreads = chpl_thread_getMaxThreads();
+  if (maxThreads < max && maxThreads > 0)
+    max = maxThreads;
+  return max;
+}
+
 c_sublocid_t chpl_task_getNumSublocales(void) {
-#ifdef CHPL_LOCALE_MODEL_NUM_SUBLOCALES
-  return CHPL_LOCALE_MODEL_NUM_SUBLOCALES;
-#else
   return 0;
-#endif
 }
 
 chpl_task_prvData_t* chpl_task_getPrvData(void) {
@@ -1117,7 +1160,7 @@ thread_begin(void* ptask_void) {
   thread_private_data_t *tp;
 
   tp = (thread_private_data_t*) chpl_mem_alloc(sizeof(thread_private_data_t),
-                                               CHPL_RT_MD_THREAD_PRIVATE_DATA,
+                                               CHPL_RT_MD_THREAD_PRV_DATA,
                                                0, 0);
   tp->ptask    = ptask;
   tp->lockRprt = NULL;
@@ -1394,7 +1437,7 @@ static task_pool_p add_to_task_pool(chpl_fn_p fp,
                                     chpl_task_list_p ltask) {
   task_pool_p ptask =
     (task_pool_p) chpl_mem_alloc(sizeof(task_pool_t),
-                                        CHPL_RT_MD_TASK_POOL_DESCRIPTOR,
+                                        CHPL_RT_MD_TASK_POOL_DESC,
                                         0, 0);
   ptask->id           = get_next_task_id();
   ptask->fun          = fp;

@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef _PASSES_H_
 #define _PASSES_H_
 
@@ -33,6 +52,7 @@ void flattenFunctions();
 void inlineFunctions();
 void insertLineNumbers();
 void insertWideReferences();
+void narrowWideReferences();
 void localizeGlobals();
 void loopInvariantCodeMotion();
 void lowerIterators();
@@ -71,10 +91,32 @@ void checkReturnTypesHaveRefTypes();
 // utility functions in pass-containing code files
 //
 
+// buildDefaultFunctions.cpp
+void buildDefaultDestructor(AggregateType* ct);
+
+// createTaskFunctions.cpp -> implementForallIntents.cpp
+extern Symbol* markPruned;
+extern Symbol* markUnspecified;
+void markOuterVarsWithIntents(CallExpr* byrefVars, SymbolMap& uses);
+void replaceVarUses(Expr* topAst, SymbolMap& vars);
+void pruneThisArg(Symbol* parent, SymbolMap& uses);
+
+// deadCodeElimination.cpp
+void deadBlockElimination();
+
+// flattenFunctions.cpp
+void flattenNestedFunctions(Vec<FnSymbol*>& nestedFunctions);
+
+// callDestructors.cpp
+void insertReferenceTemps(CallExpr* call);
+
 // parallel.cpp
 bool isRefWideString(Type* t);
 bool isWideString(Type* t);
 Type* getOrMakeRefTypeDuringCodegen(Type* type);
 Type* getOrMakeWideTypeDuringCodegen(Type* refType);
+
+// type.cpp
+void initForTaskIntents();
 
 #endif

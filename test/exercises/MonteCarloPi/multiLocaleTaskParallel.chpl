@@ -1,7 +1,7 @@
 use Random;
 
 config const n = 100000,
-             tasksPerLocale = here.numCores,
+             tasksPerLocale = here.maxTaskPar,
              seed = 589494289;
 
 writeln("Number of locales   = ", numLocales);
@@ -79,4 +79,4 @@ coforall loc in Locales {
 const count = + reduce counts;
 
 
-writeln("Approximation of pi = ", format("#.#######", count * 4.0 / n));
+writef("Approximation of pi = %{#.#######}\n", count * 4.0 / n);

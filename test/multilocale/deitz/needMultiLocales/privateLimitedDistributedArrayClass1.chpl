@@ -10,7 +10,7 @@ class DistributedArray {
   var others: [0..numLocales-1] DistributedArray;
 }
 
-proc DistributedArray.this(i: int) var {
+proc DistributedArray.this(i: int) ref {
   if ndata.member(i) {
     return data[i];
   } else {
@@ -26,7 +26,7 @@ proc DistributedArray.writeThis(W: Writer) {
   }
 }
 
-pragma "private" var A: DistributedArray;
+pragma "locale private" var A: DistributedArray;
 
 //
 // set up DistributedArray

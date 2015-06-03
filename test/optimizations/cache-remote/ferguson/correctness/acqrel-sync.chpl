@@ -4,7 +4,7 @@ config const max=100;
 
 proc doit(a:locale, b:locale, c:locale)
 {
-  extern proc printf(fmt: string, vals...?numvals): int;
+  extern proc printf(fmt: c_string, vals...?numvals): int;
  
   on a {
     if verbose then printf("on %d\n", here.id:c_int);
@@ -17,7 +17,7 @@ proc doit(a:locale, b:locale, c:locale)
     stopgob = true;
 
     sync {
-      begin ref(x) on b {
+      begin with (ref x) on b {
         for i in 0..max by 2 {
           var z = stopgob; // wait for it
           assert( x == i );
@@ -26,7 +26,7 @@ proc doit(a:locale, b:locale, c:locale)
         }
       }
 
-      begin ref(x) on c {
+      begin with (ref x) on c {
         for i in 1..max by 2 {
           var z = stopgoc; // wait for it
           assert( x == i );

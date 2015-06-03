@@ -35,7 +35,7 @@ class GridVariable {
   // Provides an alias directly into the 'value' array.
   //----------------------------------------------------
 
-  proc this(D: domain) var
+  proc this(D: domain) ref
   {
     var alias => value(D);
     return alias;
@@ -119,17 +119,17 @@ proc writeTimeFile(
 {
 
   //==== Formatting parameters ====
-  var efmt:  string = "%26.16E",
+  var efmt:  string = "%26.16Er",
       ifmt:  string = "%5i";
 
   //==== Write time file ====
-  outfile.writeln( format(efmt, time),      "    time");
-  outfile.writeln( format(ifmt, meqn),      "                 meqn");
-  outfile.writeln( format(ifmt, ngrids),    "                 ngrids");
-  outfile.writeln( format(ifmt, naux),      "                 naux");
-  outfile.writeln( format(ifmt, dimension), "                 ndim");
-  outfile.writeln("");
-  outfile.writeln("");
+  outfile.writef(efmt+"    time\n", time);
+  outfile.writef(ifmt+"                 meqn\n", meqn);
+  outfile.writef(ifmt+"                 ngrids\n", ngrids);
+  outfile.writef(ifmt+"                 naux\n", naux);
+  outfile.writef(ifmt+"                 ndim\n", dimension);
+  outfile.writef("\n");
+  outfile.writef("\n");
 
 }
 // /|""""""""""""""""""""""""""""""/|
@@ -150,49 +150,48 @@ proc GridVariable.writeData (
 {
 
   //==== Formatting parameters ====
-  var efmt:  string = "%26.16E",
+  var efmt:  string = "%26.16Er",
       ifmt:  string = "%5i",
-      sfmt:  string = "%20s",
       linelabel: string;
 
   //==== Header ====
-  outfile.writeln( format(ifmt, grid_number), "                 grid_number");
-  outfile.writeln( format(ifmt, AMR_level),   "                 AMR_level");
+  outfile.writef(ifmt+"                 grid_number\n", grid_number);
+  outfile.writef(ifmt+"                 AMR_level\n", AMR_level);
 
 
   //==== Write n_cells ====
   for d in dimensions do {
     select d {
-      when 1 do linelabel = "                 mx";
-      when 2 do linelabel = "                 my";
-      when 3 do linelabel = "                 mz";
-      otherwise linelabel = "                 mx(" + format("%1i",d) + ")";
+      when 1 do linelabel = "                 mx\n";
+      when 2 do linelabel = "                 my\n";
+      when 3 do linelabel = "                 mz\n";
+      otherwise linelabel = "                 mx(" + "%1i".format(d) + ")\n";
     }
-    outfile.writeln( format(ifmt, grid.n_cells(d)),  linelabel);
+    outfile.writef(ifmt+linelabel, grid.n_cells(d));
   }
 
 
   //==== Write x_low ====
   for d in dimensions do {
     select d {
-      when 1 do linelabel = "    xlow";
-      when 2 do linelabel = "    ylow";
-      when 3 do linelabel = "    zlow";
-      otherwise linelabel = "    xlow(" + format("%1i",d) + ")";
+      when 1 do linelabel = "    xlow\n";
+      when 2 do linelabel = "    ylow\n";
+      when 3 do linelabel = "    zlow\n";
+      otherwise linelabel = "    xlow(" + "%1i".format(d) + ")\n";
     }
-    outfile.writeln( format(efmt, grid.x_low(d)),  linelabel);
+    outfile.writef(efmt+linelabel, grid.x_low(d));
   }
 
 
   //==== Write dx ====
   for d in dimensions do {
     select d {
-      when 1 do linelabel = "    dx";
-      when 2 do linelabel = "    dy";
-      when 3 do linelabel = "    dz";
-      otherwise linelabel = "    dx(" + format("%1i",d) + ")";
+      when 1 do linelabel = "    dx\n";
+      when 2 do linelabel = "    dy\n";
+      when 3 do linelabel = "    dz\n";
+      otherwise linelabel = "    dx(" + "%1i".format(d) + ")\n";
     }
-    outfile.writeln( format(efmt, grid.dx(d)),  linelabel);
+    outfile.writef(efmt+linelabel, grid.dx(d));
   }
   outfile.writeln("");
 
@@ -200,7 +199,7 @@ proc GridVariable.writeData (
   //===> Write array values ===>
   if dimension == 1 then {
     for cell in grid.cells do
-      outfile.writeln(format(efmt, value(cell)));
+      outfile.writef(efmt+"\n", value(cell));
   }
   else {
     //------------------------------------------------------------
@@ -208,7 +207,8 @@ proc GridVariable.writeData (
     // order achieves column major order on the original domain.
     //------------------------------------------------------------
     var range_tuple: dimension*range(stridable=true);
-    [d in dimensions] range_tuple(d) = grid.cells.dim(1 + dimension - d);
+    [d in dimensions with (ref range_tuple)] // could also be 'for param d'
+      range_tuple(d) = grid.cells.dim(1 + dimension - d);
 
     var cells_transposed: domain(dimension, stridable=true);
     cells_transposed = {(...range_tuple)};
@@ -218,11 +218,12 @@ proc GridVariable.writeData (
     for cell_transposed in cells_transposed do {
 
       //==== Write value ====
-      [d in dimensions] cell(d) = cell_transposed(1 + dimension - d);
+      [d in dimensions with (ref cell)] // could also be 'for param d'
+        cell(d) = cell_transposed(1 + dimension - d);
       if abs(value(cell)) > 1.0e-99 then
-        outfile.writeln(format(efmt, value(cell)));
+        outfile.writef(efmt+"\n", value(cell));
       else
-        outfile.writeln(format(efmt, 0.0));
+        outfile.writef(efmt+"\n", 0.0);
 
       //===> Newlines at the end of each dimension ===>
       //--------------------------------------------------------------
@@ -268,7 +269,7 @@ proc GridVariable.clawOutput(
 {
 
   //==== Names of output files ====
-  var frame_string:  string = format("%04i", frame_number),
+  var frame_string:  string = "%04i".format(frame_number),
       time_filename: string = "_output/fort.t" + frame_string,
       data_filename: string = "_output/fort.q" + frame_string;
 

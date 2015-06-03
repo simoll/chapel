@@ -98,8 +98,8 @@ var
   Twiddle : [DXYZ] real;
 
 writeln(" NAS Parallel Benchmarks 2.4  -- FT Benchmark");
-writeln(" Size       : ", format("%15ld", nx*ny*nz));
-writeln(" Iterations : ", format("%15d", niter));
+writef(" Size       : %15i\n", nx*ny*nz);
+writef(" Iterations : %15i\n", niter);
 
 proc compute_initial_conditions(X1) {
   for (i,j,k) in DXYZ { // serial to ensure proper repeatable results
@@ -350,7 +350,8 @@ proc verify() {
 proc checksum(i, X1) {
   var chk : complex;
   serial {
-    [j in 1..1024] chk += X1((5*j) % nx, (3*j) % ny, j % nz);
+    // 'with' => no race - in 'serial'
+    [j in 1..1024 with (ref chk)] chk += X1((5*j) % nx, (3*j) % ny, j % nz);
   }
   chk = chk / ((nx * ny * nz) + 0i);
   sums(i) = chk;
@@ -397,11 +398,10 @@ var tm = totalTime.elapsed();
 writeln();
 writeln(" FT Benchmark Completed.");
 writeln(" Class           =                        ", problem_class);
-writeln(" Size            = ", format("%24ld", nx*ny*nz));
-writeln(" Iterations      = ", format("%24d", niter));
-if timers_enabled then {
-  writeln(" Time in seconds = ", format("%24g", tm));
- }
+writef(" Size            = %24i\n", nx*ny*nz);
+writef(" Iterations      = %24i\n", niter);
+if timers_enabled then
+  writef(" Time in seconds = %24r\n", tm);
 writeln(" Operation type  =           floating point");
 writeln(" Verification    = ", if verified then
 						   "              SUCCESSFUL" else

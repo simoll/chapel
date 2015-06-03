@@ -14,7 +14,7 @@ use Random;
 //   tasks: the number of tasks to parallelize the computation (per locale)
 //
 config const n = 100000;
-config const tasks = here.numCores;
+config const tasks = here.maxTaskPar;
 config const seed = 314159265;
 
 //
@@ -57,4 +57,4 @@ for loc in Locales do
 //
 // Output the approximation of PI.
 //
-writeln("Approximation of PI = ", format("#.#######", count * 4.0 / n));
+writef("Approximation of PI = %{#.#######}\n", count * 4.0 / n);

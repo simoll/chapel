@@ -24,7 +24,7 @@ const m = 2**n;
 //
 // The number of tasks to use per Chapel locale in parallel loops
 //
-config const tasksPerLocale = here.numCores;
+config const tasksPerLocale = here.maxTaskPar;
 
 //
 // Configuration constants defining the epsilon and threshold values
@@ -298,7 +298,7 @@ proc bitReverseShuffle(Vect: [?Dom]) {
 proc bitReverse(val: ?valType, revBits = 64) {
   param mask = 0x0102040810204080;
   const valReverse64 = bitMatMultOr(mask, bitMatMultOr(val:uint(64), mask)),
-        valReverse = bitRotLeft(valReverse64, revBits);
+        valReverse = rotl(valReverse64, revBits);
   return valReverse: valType;
 }
 

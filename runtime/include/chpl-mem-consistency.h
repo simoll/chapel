@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef _chpl_mem_consistency_h_
 #define _chpl_mem_consistency_h_
 
@@ -38,7 +57,7 @@
 // this task will allow the joined task to read values written by this
 // task.
 
-static ___always_inline
+static inline
 void chpl_rmem_consist_release(int ln, c_string fn)
 {
 #ifdef HAS_CHPL_CACHE_FNS
@@ -46,7 +65,7 @@ void chpl_rmem_consist_release(int ln, c_string fn)
 #endif
 }
 
-static ___always_inline
+static inline
 void chpl_rmem_consist_acquire(int ln, c_string fn)
 {
 #ifdef HAS_CHPL_CACHE_FNS
@@ -59,7 +78,7 @@ void chpl_rmem_consist_acquire(int ln, c_string fn)
 // exist so that we have a single place to put any required memory consistency 
 // operations/fences. 
 
-static ___always_inline
+static inline
 //void chpl_atomic_rmem_fence_pre(memory_order order, int ln, c_string fn) {
 void chpl_rmem_consist_maybe_release(memory_order order, int ln, c_string fn) {
   if(order==memory_order_acquire || order==memory_order_relaxed) {
@@ -69,7 +88,7 @@ void chpl_rmem_consist_maybe_release(memory_order order, int ln, c_string fn) {
     chpl_rmem_consist_release(ln, fn);
   }
 }
-static ___always_inline
+static inline
 //void chpl_atomic_rmem_fence_post(memory_order order, int ln, c_string fn) {
 void chpl_rmem_consist_maybe_acquire(memory_order order, int ln, c_string fn) {
   if(order==memory_order_release || order==memory_order_relaxed) {
@@ -80,7 +99,7 @@ void chpl_rmem_consist_maybe_acquire(memory_order order, int ln, c_string fn) {
   }
 }
 
-static ___always_inline
+static inline
 //void chpl_atomic_rmem_fence(memory_order order, int ln, c_string fn) {
 void chpl_rmem_consist_fence(memory_order order, int ln, c_string fn) {
   if(order==memory_order_relaxed) {

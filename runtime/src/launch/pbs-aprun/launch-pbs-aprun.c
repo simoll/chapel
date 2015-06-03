@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 // get popen/pclose
 #ifndef _XOPEN_SOURCE
 #define _XOPEN_SOURCE 600
@@ -142,7 +161,6 @@ static char* genQsubOptions(char* genFilename, char* projectString, qsubVersion 
     }
   }
   switch (qsub) {
-  case pbspro:
   case unknown:
     if (generate_qsub_script) {
       fprintf(qsubScript, "#PBS -l mppwidth=%d\n", numLocales);
@@ -152,6 +170,19 @@ static char* genQsubOptions(char* genFilename, char* projectString, qsubVersion 
       length += snprintf(optionString + length, maxOptLength - length,
                          " -l mppwidth=%d -l mppnppn=%d -l mppdepth=%d",
                          numLocales, procsPerNode, numCoresPerLocale);
+    }
+    break;
+  case pbspro:
+    if (generate_qsub_script) {
+      // We always want to use scatter since we use one PE per node
+      fprintf(qsubScript, "#PBS -l place=scatter\n");
+      fprintf(qsubScript, "#PBS -l select=%d:ncpus=%d\n", numLocales, numCoresPerLocale);
+    } else {
+      // We always want to use scatter since we use one PE per node
+      length += snprintf(optionString + length, maxOptLength - length,
+                         " -l place=scatter");
+      length += snprintf(optionString + length, maxOptLength - length,
+                         " -l select=%d:ncpus=%d", numLocales, numCoresPerLocale);
     }
     break;
   case moab:
@@ -284,7 +315,8 @@ static char** chpl_launch_create_argv(int argc, char* argv[],
     if (verbosity > 2) {
       fprintf(expectFile, "send \"aprun -q %s%d ",
               getNumLocalesStr(), 1 /* only run on one locale */);
-      fprintf(expectFile, "ls %s\\n\"\n", chpl_get_real_binary_name());
+      fprintf(expectFile, "ls %s %s\\n\"\n",
+          chpl_get_real_binary_wrapper(), chpl_get_real_binary_name());
       fprintf(expectFile, "expect {\n");
       fprintf(expectFile, "  \"failed: chdir\" {send_user "
               "\"error: %s must be launched from and/or stored on a "

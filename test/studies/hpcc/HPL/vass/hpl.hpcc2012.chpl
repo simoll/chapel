@@ -3,7 +3,6 @@
 // and Timing routines
 //
 use Norm, Random, Time;
-use UtilMath;
 
 //
 // Use the user module for computing HPCC problem sizes
@@ -369,11 +368,11 @@ proc schurComplement(blk, AD, BD, Rest) {
 proc DimensionalArr.dsiLocalSlice1((sliceDim1, sliceDim2)) {
   // might be more elegant to replace the explicit arg tuple with 'slice'
   proc toScalar(slice)
-    return if _isIntegralType(slice.type) then slice else slice.low;
+    return if isIntegralType(slice.type) then slice else slice.low;
   proc toRange(slice)
-    return if _isIntegralType(slice.type) then slice..slice else slice;
+    return if isIntegralType(slice.type) then slice..slice else slice;
   proc origScalar(param dim) param
-    return _isIntegralType(if dim==1 then sliceDim1.type else sliceDim2.type);
+    return isIntegralType(if dim==1 then sliceDim1.type else sliceDim2.type);
   proc toOrig(param dim, arg)
     return if origScalar(dim) then toScalar(arg) else toRange(arg);
 
@@ -496,7 +495,7 @@ proc psReduce(blk, k) {
         maxRes.write(min(real));
         // Starts of all the blocks in the panel that are local to this node.
         const panelStarts = blk..n by blkSize*tl1 align 1+blkSize*lid1;
-          forall iStart in panelStarts {
+          forall iStart in panelStarts with (ref locResult) {
             const iRange = max(iStart, k)..min(iStart + blkSize - 1, n);
             var myResult: psRedResultT;
             myResult.init();

@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 config param debugCSR = false;
 
 // Compressed Sparse Row
@@ -286,8 +305,8 @@ class CSRDom: BaseSparseDom {
     if (d != 2) {
       compilerError("dimIter(1, ...) not supported on CSR domains");
     }
-    for c in colIdx[rowStart(ind)..rowStop(ind)] do
-      yield c;
+    for i in rowStart[ind]..rowStop[ind] do
+      yield colIdx[i];
   }
 }
 
@@ -303,10 +322,10 @@ class CSRArr: BaseArr {
 
   proc dsiGetBaseDom() return dom;
 
-  //  proc this(ind: idxType ... 1) var where rank == 1
+  //  proc this(ind: idxType ... 1) ref where rank == 1
   //    return this(ind);
 
-  proc dsiAccess(ind: rank*idxType) var {
+  proc dsiAccess(ind: rank*idxType) ref {
     // make sure we're in the dense bounding box
     dom.boundsCheck(ind);
 
@@ -320,8 +339,8 @@ class CSRArr: BaseArr {
       return irv;
   }
 
-  iter these() var {
-    for e in data[1..dom.nnz] do yield e;
+  iter these() ref {
+    for i in 1..dom.nnz do yield data[i];
   }
 
   iter these(param tag: iterKind) where tag == iterKind.leader {
@@ -332,7 +351,7 @@ class CSRArr: BaseArr {
       yield followThis;
   }
 
-  iter these(param tag: iterKind, followThis: (?,?,?)) var where tag == iterKind.follower {
+  iter these(param tag: iterKind, followThis: (?,?,?)) ref where tag == iterKind.follower {
     // simpler than CSRDom's follower - no need to deal with rows (or columns)
     var (followThisDom, startIx, endIx) = followThis;
 
@@ -341,7 +360,7 @@ class CSRArr: BaseArr {
     if debugCSR then
       writeln("CSRArr follower: ", startIx, "..", endIx);
 
-    for e in data[startIx..endIx] do yield e;
+    for i in startIx..endIx do yield data[i];
   }
 
   iter these(param tag: iterKind, followThis) where tag == iterKind.follower {
@@ -349,7 +368,7 @@ class CSRArr: BaseArr {
     yield 0;    // Dummy.
   }
 
-  proc IRV var {
+  proc IRV ref {
     return irv;
   }
 

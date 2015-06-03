@@ -72,7 +72,7 @@ const terms   = (d/DIGITS_PER_ITER): c_long,
 
 record fac_t {
   var num_facs: c_long;
-  var sdom: domain(1, idxType=c_long);
+  var sdom: domain(1);
   var fac, pow: [sdom] c_ulong;
 };
 
@@ -244,8 +244,10 @@ proc main() {
   if (printTimings) then
     writeln("total   time = ", end - start);
 
-  writeln("   P size=", psize, " digits (", format("%f", psize:real/d), ")\n",
-          "   Q size=", qsize, " digits (", format("%f", qsize:real/d), ")");
+  writef("   P size=%n digits (%dr)\n", psize, psize:real/d);
+  writef("   Q size=%n digits (%dr)\n", qsize, qsize:real/d);
+         
+
 
   /* output Pi and timing statistics */
   if (_out&1)  {
@@ -582,17 +584,17 @@ proc fac_remove_gcd(ref p: mpz_t, ref fp: fac_t, ref g: mpz_t, ref fg: fac_t) {
 }
 
 
-proc p1  var return  pstack[top];
-proc q1  var return  qstack[top];
-proc g1  var return  gstack[top];
-proc fp1 var return fpstack[top];
-proc fg1 var return fgstack[top];
+proc p1  ref return  pstack[top];
+proc q1  ref return  qstack[top];
+proc g1  ref return  gstack[top];
+proc fp1 ref return fpstack[top];
+proc fg1 ref return fgstack[top];
 
-proc p2  var return  pstack[top+1];
-proc q2  var return  qstack[top+1];
-proc g2  var return  gstack[top+1];
-proc fp2 var return fpstack[top+1];
-proc fg2 var return fgstack[top+1];
+proc p2  ref return  pstack[top+1];
+proc q2  ref return  qstack[top+1];
+proc g2  ref return  gstack[top+1];
+proc fp2 ref return fpstack[top+1];
+proc fg2 ref return fgstack[top+1];
 
 //////////////////////////////////////////////////////////////////////
 //////

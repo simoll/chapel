@@ -1,8 +1,26 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 // ChapelTuple.chpl
 //
 // tuple data implementation as a record
 //
-pragma "no use ChapelStandard"
 module ChapelTuple {
   
   pragma "tuple" record _tuple {
@@ -60,17 +78,20 @@ module ChapelTuple {
   //
   // isTuple, isTupleType and isHomogeneousTuple param functions
   //
-  proc isTuple(x: _tuple) param
+  proc isTupleValue(x: _tuple) param
     return true;
   
-  proc isTuple(x) param
+  proc isTupleValue(x) param
     return false;
 
-  proc isHomogeneousTuple(x: _tuple) param
+  proc isHomogeneousTupleValue(x: _tuple) param
     return __primitive("is star tuple type", x);
   
   proc isTupleType(type t) param
     return __primitive("is tuple type", t);
+  
+  proc isHomogeneousTupleType(type t) param
+    return __primitive("is star tuple type", t);
   
   //
   // tuple assignment
@@ -83,8 +104,10 @@ module ChapelTuple {
   
   //
   // homogeneous tuple accessor
+  // the result is const when the tuple is
   //
-  proc _tuple.this(i : integral) var {
+  pragma "reference to const when const this"
+  proc _tuple.this(i : integral) ref {
     if !isHomogeneousTuple(this) then
       compilerError("invalid access of non-homogeneous tuple by runtime value");
     if boundsChecking then
@@ -114,7 +137,7 @@ module ChapelTuple {
       where tag == iterKind.leader 
   {
 
-    const numTasks = if dataParTasksPerLocale==0 then here.numCores
+    const numTasks = if dataParTasksPerLocale==0 then here.maxTaskPar
                      else dataParTasksPerLocale;
     const ignoreRunning = dataParIgnoreRunningTasks;
     const minIndicesPerTask = dataParMinGranularity;

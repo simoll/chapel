@@ -8,8 +8,10 @@ TARGETS = \
 	fannkuchredux \
 	mandelbrot \
 	meteor \
+	meteor-fast \
 	nbody \
 	pidigits \
+	regexdna \
 	spectralnorm \
 	threadring
 
@@ -29,7 +31,7 @@ binarytrees: binarytrees.chpl
 chameneosredux: chameneosredux.chpl
 	$(CHPL) -o $@ $(CHPL_FLAGS) $<
 
-fannkuch-redux: fannkuch-redux.chpl
+fannkuchredux: fannkuchredux.chpl
 	$(CHPL) -o $@ $(CHPL_FLAGS) $<
 
 mandelbrot: mandelbrot.chpl
@@ -38,10 +40,16 @@ mandelbrot: mandelbrot.chpl
 meteor: meteor.chpl
 	$(CHPL) -o $@ $(CHPL_FLAGS) $<
 
+meteor-fast: meteor-fast.chpl
+	$(CHPL) -o $@ $(CHPL_FLAGS) $<
+
 nbody: nbody.chpl
 	$(CHPL) -o $@ $(CHPL_FLAGS) --no-warnings $<
 
 pidigits: pidigits.chpl
+	$(CHPL) -o $@ $(CHPL_FLAGS) $<
+
+regexdna: regexdna.chpl
 	$(CHPL) -o $@ $(CHPL_FLAGS) $<
 
 spectralnorm: spectralnorm.chpl

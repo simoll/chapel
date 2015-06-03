@@ -109,16 +109,21 @@ class argument_map(object):
             return arch
 
         if compiler == 'gnu':
-            if version >= 4.9:
+            if version.major > 4:
                 return cls.gcc49.get(arch, '')
-            if version >= 4.7:
-                return cls.gcc47.get(arch, '')
-            if version >= 4.3:
-                return cls.gcc43.get(arch, '')
+            elif version.major == 4:
+                if version.minor >= 9:
+                    return cls.gcc49.get(arch, '')
+                elif version.minor >= 7:
+                    return cls.gcc47.get(arch, '')
+                elif version.minor >= 3:
+                    return cls.gcc43.get(arch, '')
             return 'none'
         elif compiler == 'intel':
             return cls.intel.get(arch, '')
         elif compiler == 'clang':
+            return cls.clang.get(arch, '')
+        elif compiler == 'clang-included':
             return cls.clang.get(arch, '')
         else:
             stderr.write('Warning: Unknown compiler: "{0}"\n'.format(compiler))
@@ -238,8 +243,28 @@ def get_cpuinfo(platform='linux'):
 class InvalidLocationError(ValueError):
     pass
 
+# We build the module with the lowest common denominator cpu architecture for
+# each platform. This is so that end users can build programs with any
+# compatible cpu architecture loaded and we don't have to build a binary for
+# each one. However, we put the cpu architecture that the module was built with
+# in the gen directory so we need a way to get the proper path no matter what
+# cpu architecture is actually loaded. Note that this MUST be kept in sync with
+# what we have in the module build script.
+def get_module_lcd_arch(platform_val, arch):
+    if arch == 'knc':
+        return arch
+
+    if platform_val == "cray-xc":
+        return "sandybridge"
+    elif platform_val == "cray-xe" or platform_val == "cray-xk":
+        return "barcelona"
+    else:
+        return 'none'
+
+# get_lcd has no affect on non cray systems and is intended to be used to get
+# the correct runtime and gen directory.
 @memoize
-def get(location, map_to_compiler=False):
+def get(location, map_to_compiler=False, get_lcd=False):
 
     if not location or location == "host":
         arch = os.environ.get('CHPL_HOST_ARCH', '')
@@ -267,6 +292,12 @@ def get(location, map_to_compiler=False):
             stderr.write("Warning: No craype-* processor type module was "
                          "detected, please load the appropriate one if you want "
                          "any specialization to occur.\n")
+        if get_lcd:
+            arch = get_module_lcd_arch(platform_val, arch)
+            if arch == 'none':
+                stderr.write("Warning: Could not detect the lowest common "
+                             "denominator processor type for this platform. "
+                             "You may be unable to use the Chapel compiler\n")
         return arch
     elif 'pgi' in compiler_val:
         return 'none'
@@ -283,7 +314,7 @@ def get(location, map_to_compiler=False):
     #
     if comm_val == 'none' and ('linux' in platform_val or
                                platform_val == 'darwin' or
-                               platform_val == 'cygwin'):
+                               platform_val.startswith('cygwin')):
         if arch:
             if arch != 'knc' and not location or location == 'host':
                 # when a user supplies an architecture, and it seems reasonable
@@ -320,16 +351,19 @@ def get(location, map_to_compiler=False):
 
 
 def _main():
-    parser = optparse.OptionParser(usage="usage: %prog [--host|target] [--compflag]")
+    parser = optparse.OptionParser(usage="usage: %prog [--host|target] "
+                                         "[--compflag] [--lcdflag]")
     parser.add_option('--target', dest='location', action='store_const',
                       const='target', default='target')
     parser.add_option('--host', dest='location', action='store_const',
                       const='host')
     parser.add_option('--compflag', dest='map_to_compiler', action='store_true',
                       default=False)
+    parser.add_option('--lcdflag', dest = 'get_lcd', action='store_true',
+                      default=False)
     (options, args) = parser.parse_args()
 
-    arch = get(options.location, options.map_to_compiler)
+    arch = get(options.location, options.map_to_compiler, options.get_lcd)
 
     stdout.write("{0}\n".format(arch))
 

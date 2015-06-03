@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 #
-# Configure environment for a particular configuration for whitebox testing.
+# Configure environment for a particular configuration for whitebox testing. To
+# use this outside of nightly testing, set these two variables in the
+# environment:
+#
+# Variable   Values
+# ------------------------------------------------------
+# COMPILER    cray, intel, pgi, gnu
+# COMP_TYPE   TARGET, HOST-TARGET, HOST-TARGET-no-PrgEnv
+#
+# Optionally, the platform can be set with:
+#
+# CRAY_PLATFORM_FROM_JENKINS
+#
+# The default is cray-xc. cray-xe is the other valid option.
 
 CWD=$(cd $(dirname ${BASH_SOURCE[0]}) ; pwd)
 source $CWD/functions.bash
@@ -21,7 +34,10 @@ fi
 
 # Variable set by Jenkins to indicate type of whitebox. If it is not set, assume cray-xc.
 platform=${CRAY_PLATFORM_FROM_JENKINS:-cray-xc}
-log_info="Using platform: ${platform}"
+log_info "Using platform: ${platform}"
+
+short_platform=$(echo "${platform}" | cut -d- -f2)
+log_info "Short platform: ${short_platform}"
 
 # Setup vars that will help load the correct compiler module.
 case $COMP_TYPE in
@@ -31,6 +47,8 @@ case $COMP_TYPE in
 
         export CHPL_TARGET_PLATFORM=$platform
         log_info "Set CHPL_TARGET_PLATFORM to: ${CHPL_TARGET_PLATFORM}"
+
+        export CHPL_NIGHTLY_TEST_CONFIG_NAME="${short_platform}-wb.prgenv-${COMPILER}"
         ;;
     HOST-TARGET)
         module_name=PrgEnv-${COMPILER}
@@ -40,6 +58,8 @@ case $COMP_TYPE in
         export CHPL_TARGET_PLATFORM=$platform
         log_info "Set CHPL_HOST_PLATFORM to: ${CHPL_HOST_PLATFORM}"
         log_info "Set CHPL_TARGET_PLATFORM to: ${CHPL_TARGET_PLATFORM}"
+
+        export CHPL_NIGHTLY_TEST_CONFIG_NAME="${short_platform}-wb.host.prgenv-${COMPILER}"
         ;;
     HOST-TARGET-no-PrgEnv)
         the_cc=${COMPILER}
@@ -48,6 +68,8 @@ case $COMP_TYPE in
         fi
         module_name=${the_cc}
         chpl_host_value=${COMPILER}
+
+        export CHPL_NIGHTLY_TEST_CONFIG_NAME="${short_platform}-wb.${COMPILER}"
         ;;
     *)
         log_error "Unknown COMP_TYPE value: ${COMP_TYPE}. Exiting."
@@ -55,36 +77,39 @@ case $COMP_TYPE in
         ;;
 esac
 
-# Load compiler module.
+# load compiler versions from $CHPL_INTERNAL_REPO/build/compiler_versions.bash
+# This should set define the load_compiler function and CHPL_GCC_VERSION.
+source $CHPL_INTERNAL_REPO/build/compiler_versions.bash
+
+# Always load the right version of GCC since we use it sometimes
+# to e.g. build the Chapel compiler with COMP_TYPE=TARGET
+if [ "${COMPILER}" != "gnu" ] ; then
+    module load gcc/${CHPL_GCC_VERSION}
+fi
+
+# Then load the selected compiler
+load_compiler ${COMPILER}
+
+# Do minor fixups
 case $COMPILER in
     cray)
-        log_info "Loading module: ${module_name}"
-        module load ${module_name}
-
         # swap out network modules to get "host-only" environment
         log_info "Swap network module for host-only environment."
         module swap craype-network-aries craype-target-local_host
-
-        # TODO: Is this still needed? (thomasvandoren, 2014-07-02)
-        log_info "Unloading cray-libsci module."
-        module unload cray-libsci
         ;;
-    intel|gnu)
-        export CHPL_REGEXP=re2
-        export CHPL_GMP=gmp
-
-        log_info "Loading module: ${module_name}"
-        module load ${module_name}
-        ;;
-    pgi)
-        log_info "Loading module: ${module_name}"
-        module load ${module_name}
+    intel|gnu|pgi)
         ;;
     *)
         log_error "Unknown COMPILER value: ${COMPILER}. Exiting."
         exit 4
         ;;
 esac
+
+libsci_module=$(module list -t 2>&1 | grep libsci)
+if [ -n "${libsci_module}" ] ; then
+    log_info "Unloading cray-libsci module: ${libsci_module}"
+    module unload $libsci_module
+fi
 
 export CHPL_HOME=$(cd $CWD/../.. ; pwd)
 
@@ -99,8 +124,7 @@ export CHPL_LAUNCHER=none
 export CHPL_COMM=none
 
 # Set some vars that nightly cares about.
-export CHPL_NIGHTLY_LOGDIR=/data/sea/chapel/Nightly/whitebox/${platform}
-export CHPL_NIGHTLY_STATDIR=/data/sea/chapel/Nightly/Stats
+export CHPL_NIGHTLY_LOGDIR=/data/sea/chapel/Nightly
 export CHPL_NIGHTLY_CRON_LOGDIR="$CHPL_NIGHTLY_LOGDIR"
 
 # Ensure that one of the CPU modules is loaded.
@@ -108,6 +132,11 @@ my_arch=$($CHPL_HOME/util/chplenv/chpl_arch.py 2> /dev/null)
 if [ "${my_arch}" = "none" ] ; then
     log_info "Loading craype-shanghai module to stifle chpl_arch.py warnings."
     module load craype-shanghai
+fi
+
+if [ "${COMP_TYPE}" != "HOST-TARGET-no-PrgEnv" ] ; then
+    log_info "Loading fftw module."
+    module load fftw
 fi
 
 log_info "Current loaded modules:"

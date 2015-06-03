@@ -3,7 +3,7 @@ config const verbose=false;
 
 proc doit(a:locale, b:locale, c:locale)
 {
-  extern proc printf(fmt: string, vals...?numvals): int;
+  extern proc printf(fmt: c_string, vals...?numvals): int;
  
   on a {
     if verbose then printf("on %d\n", here.id:c_int);
@@ -12,7 +12,7 @@ proc doit(a:locale, b:locale, c:locale)
     on b {
       x = 64;
       y = 22;
-      cobegin ref(x,y) {
+      cobegin with (ref x, ref y) {
         { on c { assert(x == 64); x = 99; assert(x == 99); } }
         { on c { assert(y == 22); y = 124; assert(y==124); } }
       }

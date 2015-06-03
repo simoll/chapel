@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include <inttypes.h>
 #include <string.h>
 #include <assert.h>
@@ -274,7 +293,7 @@ void set_valids_for_skip_len(uint64_t* valid, uintptr_t skip, uintptr_t len, int
       // entirely after the region -- nothing valid
     } else if( skip <= offset && offset + 64 <= skip+len ) {
       // entirely within the region -- totally valid
-      valid[i] = (uintptr_t) -1;
+      valid[i] = (uint64_t) -1;
     } else {
       use_start = skip - offset;
       if( use_start < 0 ) use_start = 0;

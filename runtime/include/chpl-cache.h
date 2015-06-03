@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef _chpl_cache_h_
 #define _chpl_cache_h_
 
@@ -28,13 +47,13 @@ void chpl_cache_exit(void);
 void chpl_cache_fence(int acquire, int release, int ln, c_string fn);
 
 // "acquire" barrier or fence -> discard pre-fetched GET values
-static ___always_inline
+static inline
 void chpl_cache_acquire(int ln, c_string fn)
 {
   if (chpl_cache_enabled()) chpl_cache_fence(1, 0, ln, fn);
 }
 // "release" barrier or fence -> complete pending PUTs
-static ___always_inline
+static inline
 void chpl_cache_release(int ln, c_string fn)
 {
   if (chpl_cache_enabled()) chpl_cache_fence(0, 1, ln, fn);

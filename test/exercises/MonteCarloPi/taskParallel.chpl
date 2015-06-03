@@ -1,7 +1,7 @@
 use Random;
 
 config const n = 100000,
-       tasks = here.numCores,
+       tasks = here.maxTaskPar,
        seed = 589494289;
 
 writeln("Number of points    = ", n);
@@ -39,4 +39,4 @@ coforall tid in 0..#tasks {
 //
 var count = + reduce counts;
 
-writeln("Approximation of pi = ", format("#.#######", count * 4.0 / n));
+writef("Approximation of pi = %{#.#######}\n", count * 4.0 / n);

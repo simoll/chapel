@@ -1,3 +1,22 @@
+/*
+ * Copyright 2004-2015 Cray Inc.
+ * Other additional copyright holders may be indicated within.
+ * 
+ * The entirety of this work is licensed under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * 
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "flags.h"
 
 #include "baseAST.h"
@@ -10,6 +29,7 @@ typedef MapElem<const char*, int> FlagMapElem;
 // see also flags_list.h for description
 static FlagMap flagMap;
 static const char* flagNames[NUM_FLAGS];
+static const char* flagShortNames[NUM_FLAGS];
 static const char* flagComments[NUM_FLAGS];
 static bool flagPragma[NUM_FLAGS];
 
@@ -29,6 +49,7 @@ initFlags() {
 # define symbolFlag(NAME,PRAGMA,MAPNAME,COMMENT) \
     flagMap.put(astr(MAPNAME), NAME); \
     flagNames[NAME] = #NAME; \
+    flagShortNames[NAME] = astr(MAPNAME); \
     flagComments[NAME] = COMMENT; \
     flagPragma[NAME] = PRAGMA;
 # include "flags_list.h"
@@ -43,9 +64,9 @@ initFlags() {
 }
 
 void writeFlags(FILE* fp, Symbol* sym) {
-  form_Map(FlagMapElem, e, flagMap) {
-    if (sym->flags[e->value]) {
-      fprintf(fp, " \"%s\"", e->key);
+  for (int flagNum = FLAG_FIRST; flagNum <= FLAG_LAST; flagNum++) {
+    if (sym->flags[flagNum]) {
+      fprintf(fp, " \"%s\"", flagShortNames[flagNum]);
     }
   }
 }
@@ -56,24 +77,50 @@ bool viewFlagsShort = true;
 bool viewFlagsPragma = false;
 bool viewFlagsName  = false;
 bool viewFlagsComment = false;
+bool viewFlagsExtras = true;
 
 void
 viewFlags(BaseAST* ast) {
   if (!viewFlagsShort && !viewFlagsName && !viewFlagsComment)
     viewFlagsName = true;
   if (Symbol* sym = toSymbol(ast)) {
-    form_Map(FlagMapElem, e, flagMap) {
-      if (sym->flags[e->value]) {
+    for (int flagNum = FLAG_FIRST; flagNum <= FLAG_LAST; flagNum++) {
+      if (sym->flags[flagNum]) {
         if (viewFlagsName)
-          printf("%s ", flagNames[e->value]);
+          printf("%s ", flagNames[flagNum]);
         if (viewFlagsPragma)
-          printf("%s", flagPragma[e->value] ? "ypr " : "npr ");
+          printf("%s", flagPragma[flagNum] ? "ypr " : "npr ");
         if (viewFlagsShort)
-          printf("\"%s\" ", e->key);
+          printf("\"%s\" ", flagShortNames[flagNum]);
         if (viewFlagsComment)
           printf("// %s",
-                 *flagComments[e->value] ? flagComments[e->value] : "ncm");
+                 *flagComments[flagNum] ? flagComments[flagNum] : "ncm");
         printf("\n");
+      }
+    }
+    if (viewFlagsExtras) {
+      if (VarSymbol* vs = toVarSymbol(sym)) {
+        if (vs->immediate) {
+          printf("immediate ");
+          fprint_imm(stdout, *toVarSymbol(sym)->immediate, true);
+          printf("\n");
+        }
+      } else if (ArgSymbol* as = toArgSymbol(sym)) {
+        printf("%s arg\n", as->intentDescrString());
+      } else if (toTypeSymbol(sym)) {
+        printf("a TypeSymbol\n");
+      } else if (FnSymbol* fs = toFnSymbol(sym)) {
+        printf("fn %s(%d args) %s\n",
+               fs->_this ? intentDescrString(fs->thisTag) : "",
+               fs->numFormals(), retTagDescrString(fs->retTag));
+      } else if (toEnumSymbol(sym)) {
+        printf("an EnumSymbol\n");
+      } else if (ModuleSymbol* ms = toModuleSymbol(sym)) {
+        printf("module %s\n", modTagDescrString(ms->modTag));
+      } else if (toLabelSymbol(sym)) {
+        printf("a LabelSymbol\n");
+      } else {
+        printf("unknown symbol kind\n");
       }
     }
   } else {
