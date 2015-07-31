@@ -1,4 +1,4 @@
-bug: record inheritance from specific parent
+feature request: record inheritance from specific parent
 
 fails in scope resolve discoverParentAndCheck because
 storesName is a CallExpr and not an UnresolvedSymExpr.

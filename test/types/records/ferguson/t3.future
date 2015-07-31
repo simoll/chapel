@@ -1,0 +1,109 @@
+feature request: record inheritance from generic parent
+
+fails in function resolution in searching for the
+function from the generic parent.
+
+I started work on a fix. I got far enough into function
+resolution and then ran into a problem I didn't know how
+to solve. In particular, in computeGenericSubs, if I
+could just get my hands on the generic parent type,
+the rest could (I think) proceed.
+
+In particular, I have a type like SubRecord(true),
+and need to get a type like BaseRecord(true). I don't
+know how to do that in the current compiler.
+
+Patch below, for historical interest.
+
+diff --git a/compiler/resolution/functionResolution.cpp b/compiler/resolution/functionResolution.cpp
+index 8838b17..389c99b 100644
+--- a/compiler/resolution/functionResolution.cpp
++++ b/compiler/resolution/functionResolution.cpp
+@@ -1130,6 +1130,7 @@ canInstantiate(Type* actualType, Type* formalType) {
+     return true;
+   if (actualType->instantiatedFrom && canInstantiate(actualType->instantiatedFrom, formalType))
+     return true;
++
+   return false;
+ }
+ 
+@@ -1396,6 +1397,7 @@ getInstantiationType(Type* actualType, Type* formalType) {
+       if (canInstantiate(st, formalType))
+         return st;
+   }
++  
+   return NULL;
+ }
+ 
+@@ -1454,6 +1456,39 @@ computeGenericSubs(SymbolMap &subs,
+             subs.put(formal, dtString->symbol);
+           else
+             subs.put(formal, type->symbol);
++        } else {
++          // handle record craziness
++          Type* actualType = alignedActuals.v[i]->type;
++          Type* formalType = formal->type;
++          if(isRecord(actualType) && isRecord(formalType) &&
++             actualType->instantiatedFrom &&
++             isDispatchParent(actualType->instantiatedFrom, formalType) &&
++             formalType->defaultTypeConstructor ) {
++
++            // ! fn->hasFlag(FLAG_COMPILER_GENERATED) ) {
++
++                printf("TRIGGERED IT PART TWO\n");
++
++                print_view(fn);
++                print_view(actualType);
++                print_view(formalType);
++
++
++                // create a record of the formal type but with the
++                // same substitutions that we have.
++
++                //gdbShouldBreakHere();
++
++                // find type constructor
++                // call
++                FnSymbol* sym = 
++                  instantiateSignature(formalType->defaultTypeConstructor,
++                                       actualType->substitutions, NULL);
++
++                print_view(sym);
++                //subs.put(formal, actualType->symbol);
++          }
++
+         }
+       } else if (formal->defaultExpr) {
+ 
+@@ -1772,6 +1807,22 @@ filterGenericCandidate(Vec<ResolutionCandidate*>& candidates,
+           Type* vt = actual->getValType();
+           Type* st = actual->type->scalarPromotionType;
+           Type* svt = (vt) ? vt->scalarPromotionType : NULL;
++
++          // work-around for records inheriting from generic parents
++          // ... but, this seems to cause us to create 2 destructors
++          if(isRecord(actual->type) && isRecord(formal->type) &&
++             actual->type->instantiatedFrom &&
++             isDispatchParent(actual->type->instantiatedFrom, formal->type)
++              ) {
++            printf("TRIGGERED IT\n");
++
++            print_view(info.call);
++            print_view(currCandidate->fn);
++
++            print_view(actual->type);
++            print_view(formal->type);
++          } else {
++
+           if (!canInstantiate(actual->type, formal->type) &&
+               (!vt  || !canInstantiate(vt, formal->type)) &&
+               (!st  || !canInstantiate(st, formal->type)) &&
+@@ -1780,6 +1831,8 @@ filterGenericCandidate(Vec<ResolutionCandidate*>& candidates,
+             return;
+ 
+           }
++
++          }
+         } else {
+           if (!canDispatch(actual->type, actual, formal->type, currCandidate->fn, NULL, formal->hasFlag(FLAG_INSTANTIATED_PARAM))) {
+             return;
