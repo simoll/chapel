@@ -221,7 +221,17 @@ checkReturnPaths(FnSymbol* fn) {
 
   // Check to see if the returned value is initialized.
   Symbol* ret = fn->getReturnSymbol();
+
+  // Check that the returned type matches the declared return type.
+  if( fn->hasFlag(FLAG_SPECIFIED_RETURN_TYPE) ) {
+    Type* declaredType = fn->retExprType->body.tail->typeInfo();
+    Type* inferredType = fn->retType;
+    if( declaredType != inferredType )
+      USR_FATAL_CONT(fn, "function declared return type does not match returned value");
+  }
+
   VarSymbol* var = toVarSymbol(ret);
+
   if (var)
   {
     // If it has an immediate initializer, it is initialized.
@@ -249,6 +259,7 @@ checkReturnPaths(FnSymbol* fn) {
   if (result == 0 || (result == 1 && fn->hasFlag(FLAG_SPECIFIED_RETURN_TYPE) &&
                       fn->retType->symbol->hasFlag(FLAG_IGNORE_NOINIT)))
     USR_FATAL_CONT(fn->body, "control reaches end of function that returns a value");
+
 }
 
 

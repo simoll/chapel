@@ -920,7 +920,7 @@ resolveSpecifiedReturnType(FnSymbol* fn) {
       makeRefType(fn->retType);
       fn->retType = fn->retType->refType;
     }
-    fn->retExprType->remove();
+    //fn->retExprType->remove();
     if (fn->isIterator() && !fn->iteratorInfo) {
       protoIteratorClass(fn);
     }

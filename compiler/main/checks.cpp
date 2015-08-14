@@ -57,7 +57,7 @@ static void checkAutoCopyMap();
 static void checkFormalActualBaseTypesMatch();
 static void checkRetTypeMatchesRetVarType();
 static void checkFormalActualTypesMatch();
-static void checkSpecifedReturnTypeIsNotARecordType();
+//static void checkSpecifedReturnTypeIsNotARecordType();
 
 
 //
@@ -427,7 +427,7 @@ static void check_afterResolution()
     checkFormalActualBaseTypesMatch();
     checkRetTypeMatchesRetVarType();
     checkAutoCopyMap();
-    checkSpecifedReturnTypeIsNotARecordType();
+    //checkSpecifedReturnTypeIsNotARecordType();
   }
 }
 
@@ -710,6 +710,7 @@ checkFormalActualTypesMatch()
   }
 }
 
+#if 0
 // Iterators with declared return types are not supported because the
 // current implementation implements coercion of the return value
 // expression to the declared return type by declaring a return value
@@ -740,3 +741,4 @@ static void checkSpecifedReturnTypeIsNotARecordType()
       }
   }
 }
+#endif

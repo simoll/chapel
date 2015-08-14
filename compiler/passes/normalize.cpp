@@ -582,7 +582,6 @@ returnTypeIsArray(BlockStmt* retExprType)
   return true;
 }
 
-
 // Following normalization, each function contains only one return statement
 // preceded by a label.  The first half of the function counts the 
 // total number of returns and the number of void returns.
@@ -631,6 +630,8 @@ static void normalize_returns(FnSymbol* fn) {
     }
   }
 
+  // AROUND HERE?
+
   // Add a void return if needed.
   if (rets.n == 0)
   {
@@ -661,6 +662,13 @@ static void normalize_returns(FnSymbol* fn) {
     // If the function has a specified return type (and is not a var function),
     // declare and initialize the return value up front,
     // and set the specified_return_type flag.
+
+    // MPF - let's not and say we did.
+    if( fn->retExprType && ! fn->hasFlag(FLAG_EXTERN) ) {
+      fn->retExprType->remove();
+      INT_ASSERT(fn->retExprType == NULL);
+    } else {
+
     if (fn->retExprType && fn->retTag != RET_REF) {
       BlockStmt* retExprType = fn->retExprType->copy();
       if (isIterator)
@@ -704,6 +712,9 @@ static void normalize_returns(FnSymbol* fn) {
         fn->insertAtHead(new CallExpr(PRIM_MOVE, retval, initExpr));
       }
     }
+
+    }
+
     fn->insertAtHead(new DefExpr(retval));
     fn->insertAtTail(new CallExpr(PRIM_RETURN, retval));
   }

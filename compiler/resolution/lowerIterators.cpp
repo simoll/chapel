@@ -897,6 +897,10 @@ static void localizeIteratorReturnSymbols() {
 }
 
 
+#if 0
+
+// -> not needed if normalize/resolve ignores FLAG_SPECIFIED_RETURN_TYPE
+
 //
 // Convert:
 // (248842 CallExpr move
@@ -945,12 +949,12 @@ yieldArraysByRef() {
     }
   }
 }
-
+#endif
 
 // processIteratorYields is a separate pass, called before flattenFunctions.
 // TODO: Move this and supporting functions into their own source file.
 void processIteratorYields() {
-  yieldArraysByRef();
+  //yieldArraysByRef();
   localizeIteratorReturnSymbols();
 }
 
