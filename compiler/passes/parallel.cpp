@@ -210,7 +210,7 @@ static Symbol* insertAutoCopyDestroyForTaskArg
       // TODO: Can we consolidate these two clauses?
       // Does arg->typeInfo() != baseType mean that arg is passed by ref?
       if (arg->typeInfo() != baseType)
-      {
+      {  /*
         // For internally reference-counted types, this punches through
         // references to bump the reference count.
         VarSymbol* derefTmp = newTemp(baseType);
@@ -223,6 +223,7 @@ static Symbol* insertAutoCopyDestroyForTaskArg
         fcall->insertBefore(autoCopyCall);
         insertReferenceTemps(autoCopyCall);
         // But the original var is passed through to the field assignment.
+        */
       }
       else
       {
