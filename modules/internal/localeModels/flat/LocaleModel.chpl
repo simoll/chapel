@@ -58,7 +58,7 @@ module LocaleModel {
   extern chpl__initCopy_chpl_rt_localeID_t
   proc chpl__initCopy(in initial: chpl_localeID_t): chpl_localeID_t;
 
-  extern var chpl_nodeID: chpl_nodeID_t;
+  //extern var chpl_nodeID: chpl_nodeID_t;
 
   // Runtime interface for manipulating global locale IDs.
   extern
@@ -85,6 +85,25 @@ module LocaleModel {
 
   const chpl_emptyLocaleSpace: domain(1) = {1..0};
   const chpl_emptyLocales: [chpl_emptyLocaleSpace] locale;
+
+  private proc compute_name(): string {
+    var local_name:string;
+
+    var _node_id = chpl_nodeID: int;
+    // chpl_nodeName is defined in chplsys.c.
+    // It supplies a node name obtained by running uname(3) on the
+    // current node.  For this reason (as well), the constructor (or
+    // at least this init method) must be run on the node it is
+    // intended to describe.
+    var comm, spawnfn : c_string;
+    extern proc chpl_nodeName() : c_string;
+    // sys_getenv returns zero on success.
+    if sys_getenv(c"CHPL_COMM", comm) == 0 && comm == c"gasnet" &&
+      sys_getenv(c"GASNET_SPAWNFN", spawnfn) == 0 && spawnfn == c"L"
+    then local_name = chpl_nodeName() + "-" + _node_id : string;
+    else local_name = chpl_nodeName():string;
+    return local_name;
+  }
 
   //
   // A concrete class representing the nodes in this architecture.
@@ -154,21 +173,10 @@ module LocaleModel {
     //------------------------------------------------------------------------{
     //- Implementation (private)
     //-
-    proc init() {
-      _node_id = chpl_nodeID: int;
+    proc init() : void {
 
-      // chpl_nodeName is defined in chplsys.c.
-      // It supplies a node name obtained by running uname(3) on the
-      // current node.  For this reason (as well), the constructor (or
-      // at least this init method) must be run on the node it is
-      // intended to describe.
-      var comm, spawnfn : c_string;
-      extern proc chpl_nodeName() : c_string;
-      // sys_getenv returns zero on success.
-      if sys_getenv(c"CHPL_COMM", comm) == 0 && comm == c"gasnet" &&
-        sys_getenv(c"GASNET_SPAWNFN", spawnfn) == 0 && spawnfn == c"L"
-      then local_name = chpl_nodeName() + "-" + _node_id : string;
-      else local_name = chpl_nodeName():string;
+      var _node_id = chpl_nodeID: int;
+      local_name = compute_name();
 
       extern proc chpl_task_getCallStackSize(): size_t;
       callStackSize = chpl_task_getCallStackSize();

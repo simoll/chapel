@@ -60,7 +60,7 @@ module LocaleModel {
   extern chpl__initCopy_chpl_rt_localeID_t
   proc chpl__initCopy(in initial: chpl_localeID_t): chpl_localeID_t;
 
-  extern var chpl_nodeID: chpl_nodeID_t;
+  //extern var chpl_nodeID: chpl_nodeID_t;
 
   // Runtime interface for manipulating global locale IDs.
   extern

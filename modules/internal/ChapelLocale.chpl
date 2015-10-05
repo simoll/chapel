@@ -23,15 +23,7 @@ module ChapelLocale {
 
   use LocaleModel;
   use AutoPtr;
-
-  //
-  // Node and sublocale types and special sublocale values.
-  //
-  type chpl_nodeID_t = int(32);
-  type chpl_sublocID_t = int(32);
-
-  extern const c_sublocid_none: chpl_sublocID_t;
-  extern const c_sublocid_any: chpl_sublocID_t;
+  use ChapelLocaleTypes;
 
   //
   // An abstract class. Specifies the required locale interface.

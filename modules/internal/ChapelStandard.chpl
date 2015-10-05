@@ -27,6 +27,7 @@ module ChapelStandard {
   use ChapelBase;
   use CPtr;
   use CString;
+  use ChapelLocaleTypes;
   use String;
   use MemConsistency;
   use Atomics;
