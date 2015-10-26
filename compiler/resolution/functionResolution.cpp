@@ -3977,12 +3977,23 @@ static void resolveMove(CallExpr* call) {
       }
     }
   }
-  if (rhsType == dtUnknown)
-    USR_FATAL(call, "unable to resolve type");
 
   if (rhsType == dtNil && lhsType != dtNil && !isClass(lhsType))
     USR_FATAL(userCall(call), "type mismatch in assignment from nil to %s",
               toString(lhsType));
+
+  // PRIM_COERCE has type dtUnknown, which is OK at this point,
+  // and only a local issues since the LHS must be a variable
+  // with an explicitly declared type.
+  // We will remove and handle PRIM_COERCE in in insertCasts.
+  CallExpr* rhsCall = toCallExpr(rhs);
+  if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
+    return;
+  }
+
+  if (rhsType == dtUnknown)
+    USR_FATAL(call, "unable to resolve type");
+
   Type* lhsBaseType = lhsType->getValType();
   Type* rhsBaseType = rhsType->getValType();
   bool isChplHereAlloc = false;
@@ -6448,25 +6459,106 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
         if (SymExpr* lhs = toSymExpr(call->get(1))) {
           Type* lhsType = lhs->var->type;
           if (lhsType != dtUnknown) {
-          Expr* rhs = call->get(2);
-          Type* rhsType = rhs->typeInfo();
-          if (rhsType != lhsType &&
-              rhsType->refType != lhsType &&
-              rhsType != lhsType->refType) {
-            SET_LINENO(rhs);
-            rhs->remove();
-            Symbol* tmp = NULL;
-            if (SymExpr* se = toSymExpr(rhs)) {
-              tmp = se->var;
-            } else {
-              tmp = newTemp("_cast_tmp_", rhs->typeInfo());
-              call->insertBefore(new DefExpr(tmp));
-              call->insertBefore(new CallExpr(PRIM_MOVE, tmp, rhs));
+            Expr* rhs = call->get(2);
+            Type* rhsType = rhs->typeInfo();
+            CallExpr* rhsCall = toCallExpr(rhs);
+
+            if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
+              rhsType = rhsCall->get(1)->typeInfo();
             }
-            CallExpr* cast = new CallExpr("_cast", lhsType->symbol, tmp);
-            call->insertAtTail(cast);
-            casts.add(cast);
-          }
+
+            // would this be simpler with getValType?
+            bool typesDiffer = (rhsType != lhsType &&
+                                rhsType->refType != lhsType &&
+                                rhsType != lhsType->refType);
+
+            SET_LINENO(rhs);
+
+            // Generally, we want to add casts for PRIM_MOVE
+            // that have two different types. However, in
+            // some cases with PRIM_COERCE, that won't be necessary.
+            bool castNeeded = true;
+
+            if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
+              // handle move lhs, coerce rhs
+              // in this case, we need to set lhs = rhs
+              // with a cast but only if a coercion is legal.
+              SymExpr* fromExpr = toSymExpr(rhsCall->get(1));
+              Symbol* from = fromExpr->var;
+              Symbol* to = lhs->var;
+
+              // Add a cast if the types differ.
+              // This should cause the 'from' value to be coerced to 'to'
+              // if possible or result in an compilation error.
+              if (!typesDiffer) {
+                // types are the same. remove coerce and
+                // handle reference level. No cast necessary.
+
+                Expr* rhs = NULL;
+
+                if (rhsType == lhsType)
+                  rhs = new SymExpr(from);
+                else if (rhsType == lhsType->refType)
+                  rhs = new CallExpr(PRIM_DEREF, new SymExpr(from));
+                else if (rhsType->refType == lhsType)
+                  rhs = new CallExpr(PRIM_ADDR_OF, new SymExpr(from));
+
+                CallExpr* move = new CallExpr(PRIM_MOVE, to, rhs);
+                call->replace(move);
+                casts.add(move);
+
+                castNeeded = false;
+              } else {
+                // types differ. Check that the types are
+                // coercible (by resolving = ). Then fall
+                // through to other 'move' handling below.
+                // = resolving does not necessarily mean that _cast
+                // will work, but it's as good a guess as as
+                // practical right now without user-defined coercions.
+                // Once we have user-defined coercions, this assign
+                // call should be changed to try resolving the
+                // a can-coerce method.
+
+                // This one is just for error checking.
+                // By calling =, we will generate an error if
+                // from cannot be coerced into to.
+                CallExpr* assign = new CallExpr("=", to, from);
+                call->insertBefore(assign);
+                resolveCall(assign);
+
+                assign->remove();
+
+                // Now replace it with a cast.
+                castNeeded = true;
+
+                // Remove the coerce primitive and let the
+                // _cast call below handle the rest.
+                Expr* fromSymExpr = new SymExpr(from);
+                rhs->replace(fromSymExpr);
+                rhs = fromSymExpr;
+              }
+            }
+
+            if (castNeeded) {
+              // not move lhs, coerce rhs; just a regular move
+              // (or coercion code above changed it into a regular move)
+
+              // Add a cast if the types don't match
+              if (typesDiffer) {
+                rhs->remove();
+                Symbol* tmp = NULL;
+                if (SymExpr* se = toSymExpr(rhs)) {
+                  tmp = se->var;
+                } else {
+                  tmp = newTemp("_cast_tmp_", rhs->typeInfo());
+                  call->insertBefore(new DefExpr(tmp));
+                  call->insertBefore(new CallExpr(PRIM_MOVE, tmp, rhs));
+                }
+                CallExpr* cast = new CallExpr("_cast", lhsType->symbol, tmp);
+                call->insertAtTail(cast);
+                casts.add(cast);
+              }
+            }
           }
         }
       }

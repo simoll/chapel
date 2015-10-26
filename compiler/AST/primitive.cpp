@@ -623,6 +623,15 @@ initPrimitive() {
   
   prim_def(PRIM_IS_POD, "is pod type", returnInfoBool);
 
+  // This primitive allows normalize to request function resolution
+  // coerce a return value to the declared return type, even though
+  // the declared return type is not really known until function
+  // resolution.
+  // It must be used in a prim move like this:
+  // move lhsSymExpr, coerce rhsSymExpr
+  // which means that we should try to coerce the RHS into the LHS.
+  prim_def(PRIM_COERCE, "coerce", returnInfoUnknown);
+
   prim_def(PRIM_ENUM_MIN_BITS, "enum min bits", returnInfoInt32);
   prim_def(PRIM_ENUM_IS_SIGNED, "enum is signed", returnInfoBool);
 
