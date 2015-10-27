@@ -4,7 +4,6 @@
 
 config const debug = false;
 
-pragma "ignore noinit"
 record R {
   var x: int = 0;
   var canary: int = 42;
