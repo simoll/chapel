@@ -951,6 +951,12 @@ resolveSpecifiedReturnType(FnSymbol* fn) {
     if (fn->isIterator() && !fn->iteratorInfo) {
       protoIteratorClass(fn);
     }
+
+    // Also update the return symbol type
+    Symbol* ret = fn->getReturnSymbol();
+    if (ret->type == dtUnknown) {
+      ret->type = fn->retType;
+    }
   }
 }
 
@@ -6634,6 +6640,8 @@ static void resolveReturnType(FnSymbol* fn)
   // Resolve return type.
   Symbol* ret = fn->getReturnSymbol();
   Type* retType = ret->type;
+
+  if (fn->retType != dtUnknown) return;
 
   if (retType == dtUnknown) {
 
