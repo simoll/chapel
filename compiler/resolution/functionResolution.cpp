@@ -3983,23 +3983,12 @@ static void resolveMove(CallExpr* call) {
       }
     }
   }
+  if (rhsType == dtUnknown)
+    USR_FATAL(call, "unable to resolve type");
 
   if (rhsType == dtNil && lhsType != dtNil && !isClass(lhsType))
     USR_FATAL(userCall(call), "type mismatch in assignment from nil to %s",
               toString(lhsType));
-
-  // PRIM_COERCE has type dtUnknown, which is OK at this point,
-  // and only a local issues since the LHS must be a variable
-  // with an explicitly declared type.
-  // We will remove and handle PRIM_COERCE in in insertCasts.
-  CallExpr* rhsCall = toCallExpr(rhs);
-  if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
-    return;
-  }
-
-  if (rhsType == dtUnknown)
-    USR_FATAL(call, "unable to resolve type");
-
   Type* lhsBaseType = lhsType->getValType();
   Type* rhsBaseType = rhsType->getValType();
   bool isChplHereAlloc = false;
@@ -6469,7 +6458,7 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
             Type* rhsType = rhs->typeInfo();
             CallExpr* rhsCall = toCallExpr(rhs);
 
-            if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
+            if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE_TO_RETURN)) {
               rhsType = rhsCall->get(1)->typeInfo();
             }
 
@@ -6482,16 +6471,19 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
 
             // Generally, we want to add casts for PRIM_MOVE
             // that have two different types. However, in
-            // some cases with PRIM_COERCE, that won't be necessary.
+            // some cases with PRIM_COERCE_TO_RETURN, that won't be necessary.
+
             bool castNeeded = true;
 
-            if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
+            if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE_TO_RETURN)) {
               // handle move lhs, coerce rhs
               // in this case, we need to set lhs = rhs
               // with a cast but only if a coercion is legal.
               SymExpr* fromExpr = toSymExpr(rhsCall->get(1));
               Symbol* from = fromExpr->var;
               Symbol* to = lhs->var;
+
+              INT_ASSERT(lhsType == fn->retType);
 
               // Add a cast if the types differ.
               // This should cause the 'from' value to be coerced to 'to'
@@ -6546,8 +6538,8 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
             }
 
             if (castNeeded) {
-              // not move lhs, coerce rhs; just a regular move
-              // (or coercion code above changed it into a regular move)
+              // just a regular move
+              // (possibly coercion code above took out a coercion primitive)
 
               // Add a cast if the types don't match
               if (typesDiffer) {

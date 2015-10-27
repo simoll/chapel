@@ -303,6 +303,16 @@ returnInfoVirtualMethodCall(CallExpr* call) {
   return fn->retType;
 }
 
+static Type*
+returnInfoParentFnReturnType(CallExpr* call) {
+  if (FnSymbol* fn = toFnSymbol(call->parentSymbol)) {
+    if (fn->retType != dtUnknown)
+      return fn->retType;
+  }
+  return dtUnknown;
+}
+
+
 // print the number of each type of primitive present in the AST
 void printPrimitiveCounts(const char* passName) {
   int primCounts[NUM_KNOWN_PRIMS];
@@ -627,10 +637,12 @@ initPrimitive() {
   // coerce a return value to the declared return type, even though
   // the declared return type is not really known until function
   // resolution.
-  // It must be used in a prim move like this:
-  // move lhsSymExpr, coerce rhsSymExpr
-  // which means that we should try to coerce the RHS into the LHS.
-  prim_def(PRIM_COERCE, "coerce", returnInfoUnknown);
+  // It coerces to the return type (vs the type of the LHS symbol
+  // in a move for example) in order to fit in better with type inference
+  // in function resolution - namely the inference always proceeds from
+  // RHS to LHS.
+  prim_def(PRIM_COERCE_TO_RETURN, "coerce to return",
+      returnInfoParentFnReturnType);
 
   prim_def(PRIM_ENUM_MIN_BITS, "enum min bits", returnInfoInt32);
   prim_def(PRIM_ENUM_IS_SIGNED, "enum is signed", returnInfoBool);
