@@ -306,8 +306,9 @@ returnInfoVirtualMethodCall(CallExpr* call) {
 static Type*
 returnInfoParentFnReturnType(CallExpr* call) {
   if (FnSymbol* fn = toFnSymbol(call->parentSymbol)) {
-    if (fn->retType != dtUnknown)
-      return fn->retType;
+    Symbol* ret = fn->getReturnSymbol();
+    if (ret && ret->type)
+      return ret->type;
   }
   return dtUnknown;
 }

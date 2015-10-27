@@ -6494,7 +6494,9 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
               Symbol* from = fromExpr->var;
               Symbol* to = lhs->var;
 
-              INT_ASSERT(lhsType == fn->retType);
+              // Check that lhsType == functions declared return type
+              Symbol* ret = fn->getReturnSymbol();
+              INT_ASSERT(ret && lhsType == ret->type);
 
               // Add a cast if the types differ.
               // This should cause the 'from' value to be coerced to 'to'
@@ -6502,8 +6504,6 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
               if (!typesDiffer) {
                 // types are the same. remove coerce and
                 // handle reference level. No cast necessary.
-
-                Expr* rhs = NULL;
 
                 if (rhsType == lhsType)
                   rhs = new SymExpr(from);
@@ -6554,7 +6554,6 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
 
               // Add a cast if the types don't match
               if (typesDiffer) {
-                rhs->remove();
                 Symbol* tmp = NULL;
                 if (SymExpr* se = toSymExpr(rhs)) {
                   tmp = se->var;
@@ -6564,7 +6563,7 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
                   call->insertBefore(new CallExpr(PRIM_MOVE, tmp, rhs));
                 }
                 CallExpr* cast = new CallExpr("_cast", lhsType->symbol, tmp);
-                call->insertAtTail(cast);
+                rhs->replace(cast);
                 casts.add(cast);
               }
             }
