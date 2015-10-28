@@ -1412,6 +1412,7 @@ FnSymbol::FnSymbol(const char* initName) :
   formals(),
   setter(NULL),
   retType(dtUnknown),
+  yieldType(NULL),
   where(NULL),
   retExprType(NULL),
   body(new BlockStmt()),
@@ -1514,6 +1515,7 @@ FnSymbol::copyInnerCore(SymbolMap* map) {
   newFn->partialCopySource  = this;
   newFn->astloc             = this->astloc;
   newFn->retType            = this->retType;
+  newFn->yieldType          = this->yieldType;
   newFn->thisTag            = this->thisTag;
   newFn->cname              = this->cname;
   newFn->_outer             = this->_outer;
@@ -2153,8 +2155,11 @@ FnSymbol::replaceReturnSymbol(Symbol* newRetSymbol, Type* newRetType)
   // updating
   sym->var = newRetSymbol;
   this->retSymbol = newRetSymbol;
-  if (newRetType)
+  if (newRetType) {
     this->retType = newRetType;
+    // TODO -- should we replace yield type or ret type?
+    INT_ASSERT(! this->yieldType);
+  }
 
   return prevRetSymbol;
 }

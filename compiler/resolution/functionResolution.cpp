@@ -800,6 +800,8 @@ protoIteratorClass(FnSymbol* fn) {
   // can fill in the bodies of the above 9 methods in the lowerIterators pass.
   ii->irecord->defaultInitializer = fn;
   ii->irecord->scalarPromotionType = fn->retType;
+  // Save the yielded type before we change the function return type.
+  fn->yieldType = fn->retType;
   fn->retType = ii->irecord;
   fn->retTag = RET_VALUE;
 
@@ -6624,9 +6626,12 @@ static void buildValueFunction(FnSymbol* fn) {
       copy->retTag = RET_VALUE;   // Change ret flag to value (not ref).
       fn->defPoint->insertBefore(new DefExpr(copy));
       fn->valueFunction = copy;
+      // Reset the types of the return symbol and any
+      // declared return types
       Symbol* ret = copy->getReturnSymbol();
       ret->type = dtUnknown;
       copy->retType = dtUnknown;
+      if (copy->yieldType) copy->yieldType = dtUnknown;
       replaceSetterArgWithFalse(copy, copy, ret);
       replaceSetterArgWithTrue(fn, fn);
     } else {

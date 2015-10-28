@@ -327,6 +327,12 @@ class FnSymbol : public Symbol {
                  // fully established until resolution, and could be NULL
                  // before then.  Up to that point, return type information is
                  // stored in the retExprType field.
+  Type* yieldType; // For iterators, the type that is yielded
+                   // (could be from the declared return type).
+                   // For non-iterators, this should be NULL.
+                   // iterators also have a retType that corresponds to
+                   // the iterator class/record (for the implementation of
+                   // lowering).
   BlockStmt* where;
   BlockStmt* retExprType;
   BlockStmt* body;
