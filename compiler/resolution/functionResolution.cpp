@@ -948,10 +948,11 @@ resolveSpecifiedReturnType(FnSymbol* fn) {
   retType = fn->retExprType->body.tail->typeInfo();
   fn->retType = retType;
 
-  if (fn->retType != dtUnknown) {
+  if (retType != dtUnknown) {
     if (fn->retTag == RET_REF) {
-      makeRefType(fn->retType);
-      fn->retType = fn->retType->refType;
+      makeRefType(retType);
+      retType = fn->retType->refType;
+      fn->retType = retType;
     }
     fn->retExprType->remove();
     if (fn->isIterator() && !fn->iteratorInfo) {
@@ -6497,8 +6498,12 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
               Symbol* to = lhs->var;
 
               // Check that lhsType == functions declared return type
-              Symbol* ret = fn->getReturnSymbol();
-              INT_ASSERT(ret && lhsType == ret->type);
+              //Symbol* ret = fn->getReturnSymbol();
+              //INT_ASSERT(ret && lhsType == ret->type);
+              if (fn->yieldType)
+                lhsType = fn->yieldType;
+              else
+                lhsType = fn->retType;
 
               // Add a cast if the types differ.
               // This should cause the 'from' value to be coerced to 'to'
