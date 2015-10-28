@@ -675,23 +675,6 @@ static void normalize_returns(FnSymbol* fn) {
           returnTypeIsArray(retExprType))
         // Treat iterators returning arrays as if they are always returned by ref.
         fn->retTag = RET_REF;
-      else
-      {
-        CallExpr* initExpr;
-        // In most cases, we do not need to default initialize the return temps,
-        // as they will be assigned to before they are returned.  We cannot
-        // check against the specific types that do not allow the use of noinit
-        // here (that happens in function resolution), but we do know whether
-        // the function expects a param or type variable as its result and these
-        // cases would become confused if noinit was used with them (since
-        // noinit is not allowed on param or type variables).  So default
-        // initialize in those cases but in all others insert noinit and trust
-        // it will be handled correctly for types that do not allow it.
-        if (fn->retTag == RET_PARAM || fn->retTag == RET_TYPE) {
-          initExpr = new CallExpr(PRIM_INIT, retExprType->body.tail->remove());
-          fn->insertAtHead(new CallExpr(PRIM_MOVE, retval, initExpr));
-        }
-      }
     }
     fn->insertAtHead(new DefExpr(retval));
     fn->insertAtTail(new CallExpr(PRIM_RETURN, retval));

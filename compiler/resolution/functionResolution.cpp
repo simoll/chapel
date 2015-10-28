@@ -4055,6 +4055,37 @@ static void resolveMove(CallExpr* call) {
                                     isChplHereAlloc ? lhs->type->symbol :
                                     lhsBaseType->symbol, tmp));
   }
+
+  // Fix up PRIM_COERCE_TO_RETURN : remove it if it has a param RHS.
+  CallExpr* rhsCall = toCallExpr(rhs);
+
+  if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE_TO_RETURN)) {
+    SymExpr* toCoerceSE = toSymExpr(rhsCall->get(1));
+    if (toCoerceSE) {
+      Symbol* toCoerceSym = toCoerceSE->var;
+      // This transformation is normally handled in insertCasts
+      // but we need to do it earlier for parameters. We can't just
+      // call insertCasts since that would dramatically change the
+      // resolution order.
+      if (toCoerceSym->isParameter() ||
+          toCoerceSym->hasFlag(FLAG_TYPE_VARIABLE) ) {
+        // Can we coerce from the argument to the function return type?
+        // Note that rhsType here is the function return type (since
+        // that is what the primitive returns as its type).
+        if (toCoerceSym->type == rhsType ||
+            canParamCoerce(toCoerceSym->type, toCoerceSym, rhsType)) {
+          //CallExpr* move = new CallExpr(PRIM_MOVE, lhs, toCoerceSym);
+          //call->replace(move);
+          //resolveCall(move);
+          call->get(1)->replace(new SymExpr(lhs));
+          call->get(2)->replace(new SymExpr(toCoerceSym));
+        } else {
+          USR_FATAL(userCall(call), "type mismatch in return from %s to %s",
+                    toString(toCoerceSym->type), toString(rhsType));
+        }
+      }
+    }
+  }
 }
 
 
