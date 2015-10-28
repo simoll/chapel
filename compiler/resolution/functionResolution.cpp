@@ -6659,9 +6659,9 @@ static void buildValueFunction(FnSymbol* fn) {
       fn->defPoint->insertBefore(new DefExpr(copy));
       fn->valueFunction = copy;
       Symbol* ret = copy->getReturnSymbol();
-      // Note - after this, we will rely on resolution to implicitly
-      // replace the return type even if it was already set. If that
-      // changes, this code would need to set the type back to dtUnknown.
+      // Reset the type sof the return symbol and any declared return type.
+      ret->type = dtUnknown;
+      copy->retType = dtUnknown;
       replaceSetterArgWithFalse(copy, copy, ret);
       replaceSetterArgWithTrue(fn, fn);
     } else {
