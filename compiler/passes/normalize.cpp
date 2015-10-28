@@ -546,7 +546,8 @@ static void insertRetMove(FnSymbol* fn, VarSymbol* retval, CallExpr* ret) {
     // This is the case for a declared return type.
 
     ret->insertBefore(new CallExpr(PRIM_MOVE, retval,
-                      new CallExpr(PRIM_COERCE_TO_RETURN, ret_expr)));
+                      new CallExpr(PRIM_COERCE, ret_expr,
+                        fn->retExprType->body.tail->copy())));
   }
   else if (!fn->hasFlag(FLAG_WRAPPER) && strcmp(fn->name, "iteratorIndex") &&
            strcmp(fn->name, "iteratorIndexHelp"))

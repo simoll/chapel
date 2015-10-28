@@ -304,17 +304,9 @@ returnInfoVirtualMethodCall(CallExpr* call) {
 }
 
 static Type*
-returnInfoParentFnReturnType(CallExpr* call) {
-  Type* ret = NULL;
-  if (FnSymbol* fn = toFnSymbol(call->parentSymbol)) {
-    if (fn->yieldType) {
-      ret = fn->yieldType;
-    } else {
-      ret = fn->retType;
-    }
-  }
-  if (ret) return ret;
-  return dtUnknown;
+returnInfoSecondType(CallExpr* call) {
+  Type* t = call->get(2)->typeInfo();
+  return t;
 }
 
 
@@ -642,12 +634,8 @@ initPrimitive() {
   // coerce a return value to the declared return type, even though
   // the declared return type is not really known until function
   // resolution.
-  // It coerces to the return type (vs the type of the LHS symbol
-  // in a move for example) in order to fit in better with type inference
-  // in function resolution - namely the inference always proceeds from
-  // RHS to LHS.
-  prim_def(PRIM_COERCE_TO_RETURN, "coerce to return",
-      returnInfoParentFnReturnType);
+  // It coerces its first argument to the type stored in the second argument.
+  prim_def(PRIM_COERCE, "coerce", returnInfoSecondType);
 
   prim_def(PRIM_ENUM_MIN_BITS, "enum min bits", returnInfoInt32);
   prim_def(PRIM_ENUM_IS_SIGNED, "enum is signed", returnInfoBool);

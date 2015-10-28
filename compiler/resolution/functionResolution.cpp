@@ -794,7 +794,9 @@ protoIteratorClass(FnSymbol* fn) {
   ii->zip3 = protoIteratorMethod(ii, "zip3", dtVoid);
   ii->zip4 = protoIteratorMethod(ii, "zip4", dtVoid);
   ii->hasMore = protoIteratorMethod(ii, "hasMore", dtInt[INT_SIZE_DEFAULT]);
+
   ii->getValue = protoIteratorMethod(ii, "getValue", fn->retType);
+
   ii->init = protoIteratorMethod(ii, "init", dtVoid);
   ii->incr = protoIteratorMethod(ii, "incr", dtVoid);
 
@@ -804,8 +806,6 @@ protoIteratorClass(FnSymbol* fn) {
   // can fill in the bodies of the above 9 methods in the lowerIterators pass.
   ii->irecord->defaultInitializer = fn;
   ii->irecord->scalarPromotionType = fn->retType;
-  // Save the yielded type before we change the function return type.
-  fn->yieldType = fn->retType;
   fn->retType = ii->irecord;
   fn->retTag = RET_VALUE;
 
@@ -961,21 +961,19 @@ resolveSpecifiedReturnType(FnSymbol* fn) {
     fn->retExprType->remove();
     if (fn->isIterator() && !fn->iteratorInfo) {
       // Note: protoIteratorClass changes fn->retType
-      // to the iterator record. The yielded type is
-      // stored in irecord->scalarPromotionType.
-      // It is also stored in the local retType variable
-      // in this function.
+      // to the iterator record. The original return type
+      // is stored here in retType.
       protoIteratorClass(fn);
     }
-
-    // Also update the return symbol type
-    Symbol* ret = fn->getReturnSymbol();
-    if (ret->type == dtUnknown) {
-      // uses the local variable saving the resolved declared return type
-      // since for iterators, fn->retType is the iterator record.
-      ret->type = retType;
-    }
   }
+
+   // Also update the return symbol type
+   Symbol* ret = fn->getReturnSymbol();
+   if (ret->type == dtUnknown) {
+     // uses the local variable saving the resolved declared return type
+     // since for iterators, fn->retType is the iterator record.
+     ret->type = retType;
+   }
 }
 
 
@@ -4060,10 +4058,10 @@ static void resolveMove(CallExpr* call) {
                                     lhsBaseType->symbol, tmp));
   }
 
-  // Fix up PRIM_COERCE_TO_RETURN : remove it if it has a param RHS.
+  // Fix up PRIM_COERCE : remove it if it has a param RHS.
   CallExpr* rhsCall = toCallExpr(rhs);
 
-  if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE_TO_RETURN)) {
+  if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
     SymExpr* toCoerceSE = toSymExpr(rhsCall->get(1));
     if (toCoerceSE) {
       Symbol* toCoerceSym = toCoerceSE->var;
@@ -4078,9 +4076,8 @@ static void resolveMove(CallExpr* call) {
         // that is what the primitive returns as its type).
         if (toCoerceSym->type == rhsType ||
             canParamCoerce(toCoerceSym->type, toCoerceSym, rhsType)) {
-          //CallExpr* move = new CallExpr(PRIM_MOVE, lhs, toCoerceSym);
-          //call->replace(move);
-          //resolveCall(move);
+          // Replacing the arguments to the move works, but for
+          // some reason replacing the whole move doesn't.
           call->get(1)->replace(new SymExpr(lhs));
           call->get(2)->replace(new SymExpr(toCoerceSym));
         } else {
@@ -6507,7 +6504,7 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
             Type* rhsType = rhs->typeInfo();
             CallExpr* rhsCall = toCallExpr(rhs);
 
-            if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE_TO_RETURN)) {
+            if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
               rhsType = rhsCall->get(1)->typeInfo();
             }
 
@@ -6520,11 +6517,11 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
 
             // Generally, we want to add casts for PRIM_MOVE
             // that have two different types. However, in
-            // some cases with PRIM_COERCE_TO_RETURN, that won't be necessary.
+            // some cases with PRIM_COERCE, that won't be necessary.
 
             bool castNeeded = true;
 
-            if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE_TO_RETURN)) {
+            if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
               // handle move lhs, coerce rhs
               // in this case, we need to set lhs = rhs
               // with a cast but only if a coercion is legal.
@@ -6532,13 +6529,8 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
               Symbol* from = fromExpr->var;
               Symbol* to = lhs->var;
 
-              // Check that lhsType == functions declared return type
-              //Symbol* ret = fn->getReturnSymbol();
-              //INT_ASSERT(ret && lhsType == ret->type);
-              if (fn->yieldType)
-                lhsType = fn->yieldType;
-              else
-                lhsType = fn->retType;
+              // Check that lhsType == the result of coercion
+              INT_ASSERT(lhsType == rhsCall->typeInfo());
 
               // Add a cast if the types differ.
               // This should cause the 'from' value to be coerced to 'to'
@@ -6666,12 +6658,10 @@ static void buildValueFunction(FnSymbol* fn) {
       copy->retTag = RET_VALUE;   // Change ret flag to value (not ref).
       fn->defPoint->insertBefore(new DefExpr(copy));
       fn->valueFunction = copy;
-      // Reset the types of the return symbol and any
-      // declared return types
       Symbol* ret = copy->getReturnSymbol();
-      ret->type = dtUnknown;
-      copy->retType = dtUnknown;
-      if (copy->yieldType) copy->yieldType = dtUnknown;
+      // Note - after this, we will rely on resolution to implicitly
+      // replace the return type even if it was already set. If that
+      // changes, this code would need to set the type back to dtUnknown.
       replaceSetterArgWithFalse(copy, copy, ret);
       replaceSetterArgWithTrue(fn, fn);
     } else {
@@ -6689,8 +6679,6 @@ static void resolveReturnType(FnSymbol* fn)
   // Resolve return type.
   Symbol* ret = fn->getReturnSymbol();
   Type* retType = ret->type;
-
-  if (fn->retType != dtUnknown) return;
 
   if (retType == dtUnknown) {
 
