@@ -4001,12 +4001,16 @@ static void resolveMove(CallExpr* call) {
           // some reason replacing the whole move doesn't.
           call->get(1)->replace(new SymExpr(lhs));
           call->get(2)->replace(new SymExpr(toCoerceSym));
-        } else if (canCoerce(toCoerceSym->type, toCoerceSym, rhsType,
+        } else if (isRecordWrappedType(rhsType) ||
+                   canCoerce(toCoerceSym->type, toCoerceSym, rhsType,
                              NULL, &promotes)) {
-          // any case that doesn't param coerce but does coerce will
+          // Any case that doesn't param coerce but does coerce will
           // be handled in insertCasts later.
+          // Also any case with a record wrapped type won't be handled
+          // at compile-time, so put it off until insertCastse.
+          // That is important for scalar -> array promotion.
         } else {
-          USR_FATAL(userCall(call), "type mismatch in return from %s to %s",
+          USR_FATAL(userCall(call), "type mismatch in return or initialization from %s to %s",
                     toString(toCoerceSym->type), toString(rhsType));
         }
       }
@@ -6457,7 +6461,13 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
                 // better with returning arrays. We could probably use _cast
                 // instead of = if fromType does not have a runtime type.
 
-                CallExpr* init = new CallExpr(PRIM_NO_INIT, fromType);
+                bool containsNotPOD = propagateNotPOD(fromType->typeInfo());
+                CallExpr* init;
+                if (containsNotPOD)
+                  init = new CallExpr(PRIM_INIT, fromType);
+                else
+                  init = new CallExpr(PRIM_NO_INIT, fromType);
+
                 CallExpr* moveInit = new CallExpr(PRIM_MOVE, to, init);
                 call->insertBefore(moveInit);
 
