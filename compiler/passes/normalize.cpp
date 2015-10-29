@@ -1120,20 +1120,28 @@ static void init_typed_var(VarSymbol* var, Expr* type, Expr* init, Expr* stmt, V
       // Create an empty type block.
       BlockStmt* block = new BlockStmt(NULL, BLOCK_SCOPELESS);
 
-      VarSymbol* typeTemp = newTemp("type_tmp");
-      block->insertAtTail(new DefExpr(typeTemp));
-
-      CallExpr* initCall;
-      initCall = new CallExpr(PRIM_MOVE, typeTemp,
-                   new CallExpr(PRIM_INIT, type->remove()));
-
-      block->insertAtTail(initCall);
-
       if (init) {
-        // This should be copy-initialization, not assignment.
-        block->insertAtTail(new CallExpr("=", typeTemp, init->remove()));
-        block->insertAtTail(new CallExpr(PRIM_MOVE, constTemp, typeTemp));
+        block->insertAtTail(
+          new CallExpr(PRIM_MOVE, constTemp,
+            new CallExpr(PRIM_COERCE,
+              new CallExpr("chpl__initCopy", init->remove()),
+              type->remove())));
+
+        // TODO -- don't call initCopy on the return from a function
+        // call, unless that function is marked as not returning
+        // an owned thing. Return by reference functions, maybe one
+        // with the pragma FLAG_RETURN_VALUE_IS_NOT_OWNED
       } else {
+        // no specified initializer or noinit and !fUseNoinit
+        VarSymbol* typeTemp = newTemp("type_tmp");
+        block->insertAtTail(new DefExpr(typeTemp));
+
+        CallExpr* initCall;
+        initCall = new CallExpr(PRIM_MOVE, typeTemp,
+                     new CallExpr(PRIM_INIT, type->remove()));
+
+        block->insertAtTail(initCall);
+
         if (constTemp->isType())
           block->insertAtTail(new CallExpr(PRIM_MOVE, constTemp,
                                            new CallExpr(PRIM_TYPEOF, typeTemp)));
@@ -1196,6 +1204,10 @@ static void init_untyped_var(VarSymbol* var, Expr* init, Expr* stmt, VarSymbol* 
         stmt->insertAfter(
           new CallExpr(PRIM_MOVE, constTemp,
             new CallExpr("chpl__initCopy", init->remove())));
+        // TODO -- don't call initCopy on the return from a function
+        // call, unless that function is marked as not returning
+        // an owned thing. Return by reference functions, maybe one
+        // with the pragma FLAG_RETURN_VALUE_IS_NOT_OWNED
       }
     }
 }
