@@ -6406,6 +6406,42 @@ replaceSetterArgWithFalse(BaseAST* ast, FnSymbol* fn, Symbol* ret) {
 }
 
 static void
+removeCoerceTypeTemps(CallExpr* move)
+{
+  // Search backwards from move, ending at the block start,
+  // for DefExpr, or a PRIM_MOVE where the LHS
+  // is marked with FLAG_COERCE_TYPE_TEMP.
+
+  Expr* cur = move->prev;
+  while (cur) {
+    DefExpr* def = toDefExpr(cur);
+    CallExpr* call = toCallExpr(cur);
+    Symbol* sym = NULL;
+    if (call && call->isPrimitive(PRIM_MOVE)) {
+      SymExpr* lhs = toSymExpr(call->get(1));
+      if (lhs)
+        sym = lhs->var;
+    }
+    if (def) {
+      sym = def->sym;
+    }
+
+    // Make a note of the previous before we remove cur.
+    Expr* prev = cur->prev;
+
+    if (sym && sym->hasFlag(FLAG_COERCE_TYPE_TEMP)) {
+      // remove this expression.
+      cur->remove();
+    } else {
+      // Assume we have moved up beyond the type temps.
+      break;
+    }
+
+    cur = prev;
+  }
+}
+
+static void
 insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
   if (CallExpr* call = toCallExpr(ast)) {
     if (call->parentSymbol == fn) {
@@ -6464,6 +6500,11 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
               if (!typesDiffer) {
                 // types are the same. remove coerce and
                 // handle reference level adjustments. No cast necessary.
+
+                // We won't need the type part of the coerce
+                // primitive. So remove any AST elements that resulted
+                // from that when normalizing.
+                removeCoerceTypeTemps(call);
 
                 bool needsInitCopy;
                 needsInitCopy = rhsCall->isPrimitive(PRIM_COERCE_INIT_COPY);

@@ -862,8 +862,30 @@ static void insert_call_temps(CallExpr* call)
                      parentCall->isPrimitive(PRIM_NEW)))
     return;
 
+  // Figure out if this call expression is providing the 2nd
+  // argument to a PRIM_COERCE/PRIM_COERCE_INIT_COPY since
+  // that would indicate it is a type expression that should
+  // be removed in function resolution if it is not needed
+  // (when the types are the same).
+  bool typeInCoerce = false;
+  for( CallExpr* cur = call;
+       cur && cur != stmt; ) {
+
+    CallExpr* parent = toCallExpr(cur->parentExpr);
+
+    if (parent)
+      if (parent->isPrimitive(PRIM_COERCE) ||
+          parent->isPrimitive(PRIM_COERCE_INIT_COPY))
+        if (cur == parent->get(2)) // it is the type argument
+          typeInCoerce = true;
+
+    cur = parent;
+  }
+
   SET_LINENO(call);
   VarSymbol* tmp = newTemp("call_tmp");
+  if (typeInCoerce)
+    tmp->addFlag(FLAG_COERCE_TYPE_TEMP);
   if (!parentCall || !parentCall->isNamed("chpl__initCopy"))
     tmp->addFlag(FLAG_EXPR_TEMP);
   if (call->isPrimitive(PRIM_NEW))
