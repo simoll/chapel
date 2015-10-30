@@ -3392,6 +3392,7 @@ resolveCall(CallExpr* call)
      case PRIM_INIT:                resolveDefaultGenericType(call);    break;
      case PRIM_NO_INIT:             resolveDefaultGenericType(call);    break;
      case PRIM_COERCE:              resolveDefaultGenericType(call);    break;
+     case PRIM_COERCE_INIT_COPY:    resolveDefaultGenericType(call);    break;
      case PRIM_NEW:                 resolveNew(call);                   break;
     }
   }
@@ -3981,7 +3982,9 @@ static void resolveMove(CallExpr* call) {
   // Fix up PRIM_COERCE : remove it if it has a param RHS.
   CallExpr* rhsCall = toCallExpr(rhs);
 
-  if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
+  if (rhsCall &&
+      (rhsCall->isPrimitive(PRIM_COERCE) ||
+       rhsCall->isPrimitive(PRIM_COERCE_INIT_COPY)) ) {
     SymExpr* toCoerceSE = toSymExpr(rhsCall->get(1));
     if (toCoerceSE) {
       Symbol* toCoerceSym = toCoerceSE->var;
@@ -4002,6 +4005,8 @@ static void resolveMove(CallExpr* call) {
           call->get(1)->replace(new SymExpr(lhs));
           call->get(2)->replace(new SymExpr(toCoerceSym));
         } else if (isRecordWrappedType(rhsType) ||
+                   isAtomicType(rhsType) ||
+                   isSyncType(rhsType) ||
                    canCoerce(toCoerceSym->type, toCoerceSym, rhsType,
                              NULL, &promotes)) {
           // Any case that doesn't param coerce but does coerce will
@@ -4009,8 +4014,11 @@ static void resolveMove(CallExpr* call) {
           // Also any case with a record wrapped type won't be handled
           // at compile-time, so put it off until insertCastse.
           // That is important for scalar -> array promotion.
+          // Also atomic, sync types don't need to be handled at
+          // compile-time. Putting off the error lets us give
+          // a better error message.
         } else {
-          USR_FATAL(userCall(call), "type mismatch in return or initialization from %s to %s",
+          USR_FATAL(userCall(call), "type mismatch in assignment from %s to %s",
                     toString(toCoerceSym->type), toString(rhsType));
         }
       }
@@ -6397,7 +6405,6 @@ replaceSetterArgWithFalse(BaseAST* ast, FnSymbol* fn, Symbol* ret) {
   AST_CHILDREN_CALL(ast, replaceSetterArgWithFalse, fn, ret);
 }
 
-
 static void
 insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
   if (CallExpr* call = toCallExpr(ast)) {
@@ -6410,7 +6417,9 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
             Type* rhsType = rhs->typeInfo();
             CallExpr* rhsCall = toCallExpr(rhs);
 
-            if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
+            if (rhsCall &&
+                (rhsCall->isPrimitive(PRIM_COERCE) ||
+                 rhsCall->isPrimitive(PRIM_COERCE_INIT_COPY))) {
               rhsType = rhsCall->get(1)->typeInfo();
             }
 
@@ -6428,7 +6437,9 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
             // different. It could use a _cast call if the types are different,
             // but the = call works better in cases where an array is returned.
 
-            if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
+            if (rhsCall &&
+                (rhsCall->isPrimitive(PRIM_COERCE) ||
+                 rhsCall->isPrimitive(PRIM_COERCE_INIT_COPY) ) ) {
               // handle move lhs, coerce rhs
               SymExpr* fromExpr = toSymExpr(rhsCall->get(1));
               SymExpr* fromTypeExpr = toSymExpr(rhsCall->get(2));
@@ -6443,16 +6454,33 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
                 // types are the same. remove coerce and
                 // handle reference level adjustments. No cast necessary.
 
-                if (rhsType == lhsType)
-                  rhs = new SymExpr(from);
-                else if (rhsType == lhsType->refType)
-                  rhs = new CallExpr(PRIM_DEREF, new SymExpr(from));
-                else if (rhsType->refType == lhsType)
-                  rhs = new CallExpr(PRIM_ADDR_OF, new SymExpr(from));
+                bool needsInitCopy;
+                needsInitCopy = rhsCall->isPrimitive(PRIM_COERCE_INIT_COPY);
 
-                CallExpr* move = new CallExpr(PRIM_MOVE, to, rhs);
-                call->replace(move);
-                casts.add(move);
+                if (needsInitCopy) {
+                  CallExpr* initCopy = new CallExpr("chpl__initCopy", from);
+                  CallExpr* move = new CallExpr(PRIM_MOVE, to, initCopy);
+                  call->replace(move);
+
+                  // Resolve each of the new CallExprs They need to be resolved
+                  // separately since resolveExpr does not recurse.
+                  resolveExpr(initCopy);
+                  resolveExpr(move);
+                  // (alternatively we could add these calls to casts
+                  //  to be resolved in the caller)
+
+                } else {
+                  if (rhsType == lhsType)
+                    rhs = new SymExpr(from);
+                  else if (rhsType == lhsType->refType)
+                    rhs = new CallExpr(PRIM_DEREF, new SymExpr(from));
+                  else if (rhsType->refType == lhsType)
+                    rhs = new CallExpr(PRIM_ADDR_OF, new SymExpr(from));
+
+                  CallExpr* move = new CallExpr(PRIM_MOVE, to, rhs);
+                  call->replace(move);
+                  casts.add(move);
+                }
               } else {
 
                 // Use = if the types differ.  This should cause the 'from'
@@ -6481,6 +6509,8 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
                 resolveExpr(init);
                 resolveExpr(moveInit);
                 resolveExpr(assign);
+                // (alternatively we could add these calls to casts
+                //  to be resolved in the caller)
 
                 // We've replaced the move with no-init/assign, so remove it.
                 call->remove();

@@ -1123,9 +1123,9 @@ static void init_typed_var(VarSymbol* var, Expr* type, Expr* init, Expr* stmt, V
       if (init) {
         block->insertAtTail(
           new CallExpr(PRIM_MOVE, constTemp,
-            new CallExpr(PRIM_COERCE,
-              new CallExpr("chpl__initCopy", init->remove()),
-              type->remove())));
+            new CallExpr(PRIM_COERCE_INIT_COPY,
+                         init->remove(),
+                         type->remove())));
 
         // TODO -- don't call initCopy on the return from a function
         // call, unless that function is marked as not returning
