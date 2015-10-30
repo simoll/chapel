@@ -6450,6 +6450,17 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
               // Check that lhsType == the result of coercion
               INT_ASSERT(lhsType == rhsCall->typeInfo());
 
+              if (lhsType->symbol->hasFlag(FLAG_HAS_RUNTIME_TYPE) ) {
+                typesDiffer = true;
+                // Arrays etc have a runtime type component (e.g. length).
+                // When we compared the type, this runtime type component
+                // was not included.
+                // Ideally, we could determine if two arrays must have
+                // the same runtime type at this point...
+                // if (runtimeTypesDefinatelySame(call, lhsType, fromTypeExpr))
+                //    typesDiffer = false;
+              }
+
               if (!typesDiffer) {
                 // types are the same. remove coerce and
                 // handle reference level adjustments. No cast necessary.
