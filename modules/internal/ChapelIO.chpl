@@ -256,11 +256,11 @@ module ChapelIO {
               var st = writer.styleElement(QIO_STYLE_ELEMENT_AGGREGATE);
               var eq:ioLiteral;
               if st == QIO_AGGREGATE_FORMAT_JSON {
-                eq = new ioLiteral(c'"' +
-                                   __primitive(c"field num to name", t, i) +
-                                   c" : ");
+                eq = new ioLiteral('"' +
+                                   __primitive("field num to name", t, i) +
+                                   '":');
               } else {
-                eq = new ioLiteral(__primitive("field num to name", t, i) + c" = ");
+                eq = new ioLiteral(__primitive("field num to name", t, i) + " = ");
               }
               writer.readwrite(eq);
             }
@@ -283,9 +283,11 @@ module ChapelIO {
               var st = writer.styleElement(QIO_STYLE_ELEMENT_AGGREGATE);
               var eq:ioLiteral;
               if st == QIO_AGGREGATE_FORMAT_JSON {
-                eq = new ioLiteral(__primitive("field num to name", t, i) + c" : ");
+                eq = new ioLiteral('"' +
+                                   __primitive("field num to name", t, i) +
+                                   '":');
               } else {
-                eq = new ioLiteral(__primitive("field num to name", t, i) + c" = ");
+                eq = new ioLiteral(__primitive("field num to name", t, i) + " = ");
               }
               writer.readwrite(eq);
             }
@@ -368,6 +370,8 @@ module ChapelIO {
           for param i in 1..num_fields {
             if isType(__primitive("field value by num", x, i)) ||
                isParam(__primitive("field value by num", x, i)) {
+              // do nothing for types
+             } else {
               reader.readwrite(__primitive("field value by num", x, i));
              }
           }
@@ -383,10 +387,11 @@ module ChapelIO {
 
             if !first {
               // read a comma
+
+              //writeln("READING COMMA");
               var comma = new ioLiteral(",", true);
               reader.readwrite(comma);
-                  
-              //writeln("READING COMMA");
+
               // clear the error if we didn't get a comma
               if reader.error() == EFORMAT {
                 //writeln("NO COMMA");
@@ -414,6 +419,8 @@ module ChapelIO {
             for param i in 1..num_fields {
               if isType(__primitive("field value by num", x, i)) ||
                  isParam(__primitive("field value by num", x, i)) {
+                 // do nothing for types
+              } else {
 
                 if !read_field_name {
                   if st == QIO_AGGREGATE_FORMAT_JSON {
@@ -431,7 +438,7 @@ module ChapelIO {
                   //writeln("TRYING TO READ ", fname);
                   reader.readwrite(fname);
                   //writeln("POST FNAME ERROR IS ", reader.error():int);
-   
+
                   if reader.error() == EFORMAT || reader.error() == EEOF {
                     // Try reading again with a different union element.
                     reader.clearError();
@@ -447,7 +454,7 @@ module ChapelIO {
                       eq = new ioLiteral("=", true);
                     }
                     reader.readwrite(eq);
-          
+
                     reader.readwrite(__primitive("field value by num", x, i));
                     if !reader.error() {
                       read_field[i] = true;
@@ -504,7 +511,7 @@ module ChapelIO {
           for param i in 1..num_fields {
             var st = reader.styleElement(QIO_STYLE_ELEMENT_AGGREGATE);
             var eq:ioLiteral;
-            
+
             // the field name
             var fname:ioLiteral;
 
@@ -519,7 +526,7 @@ module ChapelIO {
             }
 
             reader.readwrite(fname);
-  
+
             // Read : or = if there was no error reading field name.
             if reader.error() == EFORMAT || reader.error() == EEOF {
               // Try reading again with a different union element.

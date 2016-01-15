@@ -192,7 +192,7 @@ record list {
     var isspace = arrayStyle == QIO_ARRAY_FORMAT_SPACE && !binary;
     var isjson = arrayStyle == QIO_ARRAY_FORMAT_JSON && !binary;
     var ischpl = arrayStyle == QIO_ARRAY_FORMAT_CHPL && !binary;
- 
+
     if binary {
       // Write the number of elements.
       f <~> length;
@@ -217,7 +217,7 @@ record list {
     }
 
   }
-  
+
   pragma "no doc"
   proc readThis(f) {
     // Special handling for reading in order to handle
@@ -284,7 +284,7 @@ record list {
 
       // read the element
       f <~> elt;
-      
+
       // add it to the list
       append(elt);
 

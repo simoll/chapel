@@ -1528,7 +1528,7 @@ int32_t qio_skip_json_object_unlocked(qio_channel_t* restrict ch)
 
   //printf("in qio_skip_json_object_unlocked offset=%i\n",
   //       (int) qio_channel_offset_unlocked(ch));
-         
+
   while( true ) {
     // Read a field.
     c = qio_skip_json_field_unlocked(ch);
@@ -1644,7 +1644,7 @@ int32_t qio_skip_json_value_unlocked(qio_channel_t* restrict ch)
         }
       }
     }
-    
+
     // now read e or E followed by + - and exponent digits
     if( c == 'e' || c == 'E' ) {
       // read +, -, or a digit
@@ -1777,7 +1777,7 @@ int32_t qio_skip_json_string_unlocked(qio_channel_t* restrict ch)
 int32_t qio_skip_json_field_unlocked(qio_channel_t* restrict ch)
 {
   int32_t c;
- 
+
   // Read a whitespace followed by " or '}'
   while( true ) {
     c = qio_channel_read_byte(false, ch);
@@ -1788,7 +1788,7 @@ int32_t qio_skip_json_field_unlocked(qio_channel_t* restrict ch)
       break;
     }
   }
- 
+
   if( c == '"' ) {
     // OK, move on to reading the value.
   } else if( c == '}' ) {
