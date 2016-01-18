@@ -264,7 +264,7 @@ module ChapelIO {
               }
               writer.readwrite(eq);
             }
-      
+
             writer.readwrite(__primitive("field value by num", x, i));
   
             first = false;
