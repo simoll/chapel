@@ -4,7 +4,7 @@ record MyRecord {
   var b: int;
 }
 
-
+writef("testing default stdout: %t\n", new MyRecord(1,2));
 writef("testing json stdout: %jt\n", new MyRecord(1,2));
 
 var f = opentmp();
@@ -75,6 +75,25 @@ var f = opentmp();
   reader.close();
 }
 
+{
+  var writer = f.writer();
+  var str = '{"a":1, "b":2}\n';
+  writeln("Writing JSON: ", str);
+  writer.write(str);
+  writer.close();
+}
+
+{
+  var reader = f.reader();
+
+  var r:MyRecord;
+
+  reader.readf("%jt", r);
+
+  writeln("Read: ", r);
+
+  reader.close();
+}
 
 {
   var writer = f.writer();
@@ -95,6 +114,7 @@ var f = opentmp();
 
   reader.close();
 }
+
 
 {
   var writer = f.writer();

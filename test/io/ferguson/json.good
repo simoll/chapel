@@ -1,3 +1,4 @@
+testing default stdout: (a = 1, b = 2)
 testing json stdout: {"a":1, "b":2}
 Writing JSON: 
 got is false
@@ -8,6 +9,9 @@ Read: (a = 0, b = 0)
 Writing JSON: {"c":3}
 got is false error is bad format
 Read: (a = 0, b = 0)
+Writing JSON: {"a":1, "b":2}
+
+Read: (a = 1, b = 2)
 Writing JSON: {"b":1, "a":2}
 
 Read: (a = 2, b = 1)
