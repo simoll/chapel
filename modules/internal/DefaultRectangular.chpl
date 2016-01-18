@@ -1142,8 +1142,12 @@ module DefaultRectangular {
 
     }
 
-    if !f.writing && !f.binary() && rank == 1 && dom.ranges(1).stride == 1
-        && dom._arrs.length == 1 {
+    if false && !f.writing && !f.binary() &&
+       rank == 1 && dom.ranges(1).stride == 1 &&
+       dom._arrs.length == 1 {
+
+      // resize-on-read implementation, disabled right now
+      // until we decide how it should work.
 
       // Special handling for reading 1-D stride-1 arrays in order
       // to read them without requiring that the array length be
