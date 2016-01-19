@@ -354,7 +354,7 @@ module ChapelIO {
       param num_fields = __primitive("num fields", t);
       var isBinary = reader.binary();
   
-      //writeln("Scanning fields for ", t:string);
+      //writeln("in readThisFieldsDefaultImpl type ", t:string, " num_fields=", num_fields);
   
       if (isClassType(t)) {
         if t != object {
@@ -364,6 +364,8 @@ module ChapelIO {
         }
       }
   
+      //writeln("in readThisFieldsDefaultImpl after super type ", t:string, " num_fields=", num_fields);
+
       if !isUnionType(t) {
         // read all fields for classes and records
         if isBinary {
@@ -375,11 +377,10 @@ module ChapelIO {
               reader.readwrite(__primitive("field value by num", x, i));
             }
           }
-        } else {
+        } else if num_fields > 0 {
           // track whether or not we've read all of the fields.
 
-          // +1 here to get tuple to have >0 size
-          var read_field:(num_fields+1)*bool;
+          var read_field:(num_fields)*bool;
 
           // the order should not matter.
           while true {
@@ -400,8 +401,6 @@ module ChapelIO {
               }
             }
 
-            first = false;
-
             // find a field name that matches.
             // TODO: this is not particularly efficient. If we
             // have a lot of fields, this is O(n**2), and there
@@ -414,13 +413,15 @@ module ChapelIO {
 
             var read_field_name = false;
 
-            //writeln("BEFORE PARAM FOR");
+            //writeln("BEFORE PARAM FOR type ", t:string, " num_fields=", num_fields);
 
             for param i in 1..num_fields {
               if isType(__primitive("field value by num", x, i)) ||
                  isParam(__primitive("field value by num", x, i)) {
                 // do nothing, don't read types or params
               } else {
+                //writeln("A");
+
                 if !read_field_name {
                   if st == QIO_AGGREGATE_FORMAT_JSON {
                     fname = new ioLiteral('"' +
@@ -443,6 +444,7 @@ module ChapelIO {
                     reader.clearError();
                   } else {
                     read_field_name = true;
+                    first = false;
 
                     //writeln("DID     FIND ", fname);
 
@@ -483,6 +485,8 @@ module ChapelIO {
             }
           }
 
+          //writeln("POST WHILE ERROR IS ", reader.error():int);
+
           // check that we've read all fields, return error if not.
           if ! reader.error() {
             var ok = true;
@@ -492,6 +496,8 @@ module ChapelIO {
 
             if !ok then reader.setError(EFORMAT:syserr);
           }
+
+          //writeln("POST CHECK ERROR IS ", reader.error():int);
         }
       } else {
         // Handle unions.

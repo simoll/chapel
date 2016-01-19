@@ -97,6 +97,27 @@ var f = opentmp();
 
 {
   var writer = f.writer();
+  var str = '{"a" : 1, "b" : 2}\n';
+  writeln("Writing JSON: ", str);
+  writer.write(str);
+  writer.close();
+}
+
+{
+  var reader = f.reader();
+
+  var r:MyRecord;
+
+  reader.readf("%jt", r);
+
+  writeln("Read: ", r);
+
+  reader.close();
+}
+
+
+{
+  var writer = f.writer();
   var str = '{"b":1, "a":2}\n';
   writeln("Writing JSON: ", str);
   writer.write(str);

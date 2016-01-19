@@ -1,5 +1,5 @@
 record MyRecord {
-  var numbers:[1..0] int;
+  var numbers:list(int); // could it be [1..0] int ?
 }
 
 var myEntry:MyRecord;
