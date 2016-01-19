@@ -12,6 +12,9 @@ Read: (a = 0, b = 0)
 Writing JSON: {"a":1, "b":2}
 
 Read: (a = 1, b = 2)
+Writing JSON: {"a" : 1, "b" : 2}
+
+Read: (a = 1, b = 2)
 Writing JSON: {"b":1, "a":2}
 
 Read: (a = 2, b = 1)
