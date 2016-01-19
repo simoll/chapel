@@ -2257,26 +2257,41 @@ to create a channel to actually perform I/O operations
           the default :record:`file` value.
 
 */
+
 proc open(out error:syserr, path:string="", mode:iomode, hints:iohints=IOHINT_NONE,
     style:iostyle = defaultIOStyle(), url:string=""):file {
-  // hdfs paths are expected to be of the form:
-  // hdfs://<host>:<port>/<path>
-  proc parse_hdfs_path(path:string): (string, int, string) {
 
-    var hostidx_start = path.find("//");
-    var new_str = path[hostidx_start+2..path.length];
-    var hostidx_end = new_str.find(":");
-    var host = new_str[0..hostidx_end-1];
+  proc parse_hdfs_path(path:string) {
+    // hdfs://<host>:<port>/<path>
+    var host_start = path.find("//") + 2;
+    var colon = path.find(":", host_start..);
+    var slash = path.find("/", host_start..);
+    var host_end, port_start, port_end, path_start = 0;
 
-    new_str = new_str[hostidx_end+1..new_str.length];
+    if colon > 0 {
+      host_end = colon - 1;
+      port_start = colon + 1;
+      if slash > 0 {
+        port_end = slash - 1;
+        path_start = slash + 1;
+      } else {
+        port_end = path.length;
+      }
+    } else {
+      if slash > 0 {
+        host_end = slash - 1;
+        path_start = slash + 1;
+      } else {
+        host_end = path.length;
+      }
+    }
 
-    var portidx_end = new_str.find("/");
-    var port = new_str[0..portidx_end-1];
-
-    //the file path is whatever we have left
-    var file_path = new_str[portidx_end+1..new_str.length];
-
-    return (host, /*port:int*/0, file_path);
+    var host = path[host_start..host_end];
+    var port = "";
+    if port_start > 0 then port = path[port_start..port_end];
+    var file_path = "";
+    if path_start > 0 then file_path = path[path_start..];
+    return (host, port:int, file_path);
   }
 
   var local_style = style;
@@ -3923,15 +3938,13 @@ inline proc channel.read(ref args ...?k,
     to a string and returns the result.
   */
 proc stringify(args ...?k):string {
-  var all_primitive = true;
-  
-  for param i in 1..k {
-    if !isPrimitiveType(args[i].type) then all_primitive = false;
-  }
+  param all_primitive = isTupleOfPrimitiveTypes(args);
 
   if all_primitive {
     // As an optimization, use string concatenation for
     // all primitive type stringify...
+    // This helps to work around some resolution errors
+    // when internal modules use halt, which calls stringify.
 
     var str = "";
 
