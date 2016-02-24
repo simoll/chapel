@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2015 Cray Inc.
+ * Copyright 2004-2016 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -19,13 +19,48 @@
 
 config param debugCSR = false;
 
-// Compressed Sparse Row
+// In the following, I insist on SUBdomains because
+// I have not seen us test a non-"sub" CSR domain
+// and I do not want untested code in the docs.
+// TODO: change to 'sparse domain' and add that code to the test suite.
+/*
+This CSR layout provides a Compressed Sparse Row implementation
+for Chapel's sparse domains and arrays.
+
+To declare a CSR domain, invoke the ``CSR`` constructor without arguments
+in a `dmapped` clause. For example:
+
+  .. code-block:: chapel
+
+    use LayoutCSR;
+    var D = {1..n, 1..m};  // a default-distributed domain
+    var CSR_Domain: sparse subdomain(D) dmapped CSR();
+
+To declare a CSR array, use a CSR domain, for example:
+
+  .. code-block:: chapel
+
+    // assume the above declarations
+    var CSR_Array: [CSR_Domain] real;
+
+This domain map is a layout, i.e. it maps all indices to the current locale.
+All elements of a CSR-distributed array are stored
+on the locale where the array variable is declared.
+*/
 class CSR: BaseDist {
   proc dsiNewSparseDom(param rank: int, type idxType, dom: domain) {
     return new CSRDom(rank=rank, idxType=idxType, dist=this, parentDom=dom);
   }
 
   proc dsiClone() return new CSR();
+
+  proc dsiEqualDMaps(that: CSR) param {
+    return true;
+  }
+
+  proc dsiEqualDMaps(that) param {
+    return false;
+  }
 }
 
 class CSRDom: BaseSparseDom {
@@ -331,13 +366,23 @@ class CSRArr: BaseArr {
 
     // lookup the index and return the data or IRV
     const (found, loc) = dom.find(ind);
-    if setter && !found then
+    if found then
+      return data(loc);
+    else
       halt("attempting to assign a 'zero' value in a sparse array: ", ind);
+  }
+  proc dsiAccess(ind: rank*idxType) {
+    // make sure we're in the dense bounding box
+    dom.boundsCheck(ind);
+
+    // lookup the index and return the data or IRV
+    const (found, loc) = dom.find(ind);
     if found then
       return data(loc);
     else
       return irv;
   }
+
 
   iter these() ref {
     for i in 1..dom.nnz do yield data[i];
@@ -390,7 +435,7 @@ class CSRArr: BaseArr {
 }
 
 
-proc CSRDom.dsiSerialWrite(f: Writer) {
+proc CSRDom.dsiSerialWrite(f) {
   f.writeln("{");
   for r in rowRange {
     const lo = rowStart(r);
@@ -403,7 +448,7 @@ proc CSRDom.dsiSerialWrite(f: Writer) {
 }
 
 
-proc CSRArr.dsiSerialWrite(f: Writer) {
+proc CSRArr.dsiSerialWrite(f) {
   for r in dom.rowRange {
     const lo = dom.rowStart(r);
     const hi = dom.rowStop(r);

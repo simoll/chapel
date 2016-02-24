@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Cray Inc.
+ * Copyright 2016 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -27,7 +27,7 @@ CommWin::CommWin (int x, int y, int W, int H, const char *l)
 {
 }
 
-void CommWin::updateWin()
+void CommWin::updateWin(commData *c)
 {
   //  Write the data to the window
   const int msgsize = 1024;
@@ -36,8 +36,9 @@ void CommWin::updateWin()
   title->copy_label(mesg);
   
   // Create the text
-  snprintf (mesg, msgsize, "Total Comms = %d\nTotal bytes = %ld\n"
-            "  Gets = %d\n  Puts = %d\n  Forks = %d\n",
+  comm = c;
+  snprintf (mesg, msgsize, "Total Comms = %ld\nTotal bytes = %ld\n"
+            "  Gets = %ld\n  Puts = %ld\n  Forks = %ld\n",
             comm->numComms, comm->commSize, comm->numGets, comm->numPuts,
             comm->numComms - comm->numGets - comm->numPuts);
   info->value(mesg);

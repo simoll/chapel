@@ -1,10 +1,13 @@
 #!/usr/bin/env python
-import sys, os
+import os
+import sys
 
-import chpl_compiler
-import chpl_platform
+chplenv_dir = os.path.dirname(__file__)
+sys.path.insert(0, os.path.abspath(chplenv_dir))
+
+import chpl_compiler, chpl_platform, utils
 from utils import memoize
-import utils
+
 
 @memoize
 def get():
@@ -20,9 +23,10 @@ def get():
         # happens for X* systems using the Cray programming environment, so it
         # is safe to assume the relevant craype module will be used that sets
         # CRAY_CPU_TARGET.
+        ugni_comp = ('cray-prgenv-gnu', 'cray-prgenv-intel', 'cray-prgenv-cray')
         if (platform_val.startswith('cray-x') and
                 utils.using_chapel_module() and
-                compiler_val in ('cray-prgenv-gnu', 'cray-prgenv-intel') and
+                compiler_val in ugni_comp and
                 os.getenv('CRAY_CPU_TARGET', '') != 'knc'):
             comm_val = 'ugni'
         # automatically uses gasnet when on a cray-x* or cray-cs machine

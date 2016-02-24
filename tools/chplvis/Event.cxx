@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Cray Inc.
+ * Copyright 2016 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -24,7 +24,7 @@
 bool operator < (Event &lh, Event &rh)
 {
   if (lh.tsec() < rh.tsec()) return true;
-  if (lh.tusec() < rh.tsec()) return true;
+  if (lh.tsec() == rh.tsec() && lh.tusec() < rh.tusec()) return true;
   return false;
 }
 

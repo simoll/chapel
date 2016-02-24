@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2015 Cray Inc.
+ * Copyright 2004-2016 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -36,7 +36,7 @@
 #include <sys/stat.h>
 
 
-static const char* help_url = "http://chapel.cray.com/getinvolved.html";
+static const char* help_url = "http://chapel.cray.com/bugs.html";
 
 static void cleanup_for_exit(void) {
   deleteTmpDir();
@@ -61,8 +61,16 @@ static int err_print;
 static int err_ignore;
 static FnSymbol* err_fn = NULL;
 
-bool forceWidePtrs() {
-  return !strcmp(CHPL_LOCALE_MODEL, "numa");
+//
+// Chances are that all non-flat locale models will require wide
+// pointers.  Ultimately, we'd like to have such decisions be made by
+// param fields/methods within the locale models themselves, but that
+// would require a fairly large refactoring, so for now, we
+// special-case 'flat' with the expectation that most other locale
+// models will not be flat.
+//
+static bool forceWidePtrs() {
+  return (strcmp(CHPL_LOCALE_MODEL, "flat") != 0);
 }
 
 bool forceWidePtrsForLocal() {
@@ -73,8 +81,14 @@ bool requireWideReferences() {
   return !fLocal || forceWidePtrs();
 }
 
+//
+// If the --no-local flag is used, or the locale model is not 'flat'
+// (i.e., has sub-locales that an on-clause might target), we should
+// require on-clauses to be "outlined" (i.e., we should not assume the
+// on-clause is a no-op and execute the associated statement locally.
+//
 bool requireOutlinedOn() {
-  return !fLocal || forceWidePtrs();
+  return !fLocal || strcmp(CHPL_LOCALE_MODEL, "flat") != 0;
 }
 
 const char* cleanFilename(const char* name) {
@@ -119,9 +133,7 @@ print_user_internal_error() {
   fprintf(stderr, "%s ", error);
   char version[128];
   get_version(version);
-  fprintf(stderr, "chpl Version %s\n", version);
-  if (err_fatal)
-    clean_exit(1);
+  fprintf(stderr, "chpl Version %s", version);
 }
 
 
@@ -163,8 +175,8 @@ setupError(const char *filename, int lineno, int tag) {
 }
 
 
-static void
-printDevelErrorHeader(BaseAST* ast) {
+static bool
+printErrorHeader(BaseAST* ast) {
   if (!err_print) {
     if (Expr* expr = toExpr(ast)) {
       Symbol* parent = expr->parentSymbol;
@@ -221,35 +233,10 @@ printDevelErrorHeader(BaseAST* ast) {
     }
   }
 
-  bool apologize = !err_user;
   bool guess = filename && !have_ast_line;
-
-  if ( apologize ) {
-    fprintf(stderr, " Unfortunately the Chapel compiler has encountered\n"
-                    " an internal error. Please file a bug report that\n"
-                    " includes a program reproducing the problem as well\n"
-                    " as this output. See %s for\n"
-                    " further instructions on filing bug reports.\n"
-                    "\n", help_url);
-    if ( guess ) {
-      // Print out our best guess for the location of an error
-      // if we had no source location
-      fprintf(stderr, " The error may be related to this location:\n"
-                      " %s:%d\n",
-                      filename, linenum);
-    }
-  }
-
-
-  // TODO: indicate that the file/line is a guess if
-  //  (err_user && filename && guess && !developer)
-  // which will almost certainly change some .good files
 
   if (filename) {
     fprintf(stderr, "%s:%d: ", filename, linenum);
-    if( developer && guess ) {
-      fprintf(stderr, "[source location guessed] ");
-    }
   }
 
   if (err_print) {
@@ -264,15 +251,50 @@ printDevelErrorHeader(BaseAST* ast) {
     fprintf(stderr, "warning: ");
   }
 
-  if (!err_user && !developer) {
-    print_user_internal_error();
+  if (!err_user) {
+    if (!developer) {
+      print_user_internal_error();
+    }
   }
-
+  return guess;
 }
 
-static void printDevelErrorFooter(void) {
-  if (developer)
+
+static void printErrorFooter(bool guess) {
+  //
+  // For developers, indicate the compiler source location where an
+  // internal error was generated.
+  //
+  if (developer && !err_user)
     fprintf(stderr, " [%s:%d]", err_filename, err_lineno);
+
+  //
+  // For users and developers, if the source line was a guess (i.e., an
+  // AST was not passed to the INT_FATAL() macro and we relied on the
+  // global SET_LINENO() information instead), indicate that.
+  //
+  if (guess) {
+    fprintf(stderr, "\nNote: This source location is a guess.");
+  }
+
+  //
+  // Apologize for our internal errors to the end-user
+  //
+  if (!developer && !err_user) {
+    fprintf(stderr, "\n\n"
+            "Internal errors indicate a bug in the Chapel compiler (\"It's us, not you\"),\n"
+            "and we're sorry for the hassle.  We would appreciate your reporting this bug -- \n"
+            "please see %s for instructions.  In the meantime,\n"
+            "the filename + line number above may be useful in working around the issue.\n\n", 
+            help_url);
+
+    //
+    // and exit if it's fatal (isn't it always?)
+    //
+    if (err_fatal) {
+      clean_exit(1);
+    }
+  }
 }
 
 
@@ -333,22 +355,27 @@ void handleError(const char *fmt, ...) {
   if (err_ignore)
     return;
 
-  printDevelErrorHeader(NULL);
+  bool guess = printErrorHeader(NULL);
 
-  if (!err_user && !developer)
-    return;
+  //
+  // Only print out the arguments if this is a user error or we're
+  // in developer mode.
+  //
+  if (err_user || developer) {
+    va_list args;
 
-  va_list args;
+    va_start(args, fmt);
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+  }
 
-  va_start(args, fmt);
-  vfprintf(stderr, fmt, args);
-  va_end(args);
-
-  printDevelErrorFooter();
-
+  printErrorFooter(guess);
   fprintf(stderr, "\n");
 
   printCallStackOnError();
+
+  if (!err_user && !developer)
+    return;
 
   if (exit_immediately) {
     if (ignore_errors_for_pass) {
@@ -380,24 +407,26 @@ static void vhandleError(FILE* file, BaseAST* ast, const char *fmt, va_list args
   if (err_ignore)
     return;
 
+  bool guess = false;
   if (file == stderr)
-    printDevelErrorHeader(ast);
+    guess = printErrorHeader(ast);
 
-  if (!err_user && !developer)
-    return;
-
-  vfprintf(file, fmt, args);
+  if (err_user || developer) {
+    vfprintf(file, fmt, args);
+  }
 
   if (fPrintIDonError && ast)
     fprintf(file, " [%d]", ast->id);
 
   if (file == stderr)
-    printDevelErrorFooter();
-
+    printErrorFooter(guess);
   fprintf(file, "\n");
 
   if (file == stderr)
     printCallStackOnError();
+
+  if (!err_user && !developer)
+    return;
 
   if (exit_immediately) {
     if (ignore_errors_for_pass) {

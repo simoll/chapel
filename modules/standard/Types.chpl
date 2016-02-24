@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2015 Cray Inc.
+ * Copyright 2004-2016 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -130,12 +130,43 @@ The argument must be a type.
 pragma "no instantiation limit"
 proc isStringType(type t) param return t == string;
 
+/*
+POD stands for Plain Old Data and roughly corresponds to the meaning of Plain
+Old Data in C++.
+
+A record, tuple, or union type in Chapel is a POD type if:
+
+  * it does not set pragma "ignore noinit"
+  * it has only a compiler generated autoCopy
+  * it has only a compiler generated autoDestroy
+  * it has only a compiler generated default initialization/construction
+    routine
+  * it has only a compiler generated = routine (when the left hand side
+    and right hand side have the same type. Assignment overloads covering cases
+    where left hand side and right hand side are different types are allowed
+    for POD types)
+  * it contains only POD type fields
+
+User class types in Chapel are always considered POD types (because an instance
+of the class is actually a pointer to the class object, and this pointer is
+POD).
+
+c_ptr is a POD type.
+
+Primitive numeric/boolean/enumerated Chapel types are POD types as well.
+ */
+pragma "no instantiation limit"
+pragma "no doc" // I don't think we want to make this public yet
+proc isPODType(type t) param {
+  return __primitive("is pod type", t);
+}
+
 // Returns the unsigned equivalent of the input type.
 pragma "no doc"
 proc chpl__unsignedType(type t) type 
 {
   if ! isIntegralType(t) then
-    compilerError("range idxType is non-integral: ", typeToString(t));
+    compilerError("range idxType is non-integral: ", t:string);
 
   return uint(numBits(t));
 }
@@ -146,7 +177,7 @@ pragma "no doc"
 proc chpl__signedType(type t) type 
 {
   if ! isIntegralType(t) then
-    compilerError("range idxType is non-integral: ", typeToString(t));
+    compilerError("range idxType is non-integral: ", t:string);
 
   return int(numBits(t));
 }
@@ -154,7 +185,7 @@ proc chpl__signedType(type t) type
 pragma "no doc"
 proc chpl__maxIntTypeSameSign(type t) type {
   if ! isIntegralType(t) then
-    compilerError("type t is non-integral: ", typeToString(t));
+    compilerError("type t is non-integral: ", t:string);
 
   if (isIntType(t)) then
     return int(64);
@@ -212,6 +243,10 @@ proc isUnionValue(e)     param  return isUnionType(e.type);
 // isSingleValue
 pragma "no doc"
 proc isAtomicValue(e)    param  return isAtomicType(e.type);
+pragma "no doc"
+proc isRefIterValue(e)   param  return isRefIterType(e.type);
+pragma "no doc"
+proc isPODValue(e)       param  return isPODType(e.type);
 
 
 //
@@ -268,6 +303,24 @@ pragma "no doc"
 proc isSingle(type t)    param  return isSingleType(t);
 pragma "no doc"
 proc isAtomic(type t)    param  return isAtomicType(t);
+pragma "no doc"
+proc isRefIter(type t)   param  return isRefIterType(t);
+pragma "no doc"
+proc isPOD(type t)       param  return isPODType(t);
+pragma "no doc"
+proc isTupleOfPrimitiveTypes(e) param
+{
+  if !isTuple(e) then return false;
+
+  // compute && reduce isPrimitiveValue over the tuple
+  proc help(x) param
+    return isPrimitiveValue(x);
+
+  proc help(x, args ...) param
+    return isPrimitiveValue(x) && help((...args));
+
+  return help((...e));
+}
 
 // Set 2 - values.
 /*
@@ -314,13 +367,16 @@ proc isSync(e)           param  return false;
 pragma "no doc"
 proc isSingle(e: single) param  return true; // workaround: not isSingleValue
 proc isSingle(e)         param  return false;
+proc isAtomic(e)    param  return isAtomicValue(e);
 // Here is a single doc comment for the above.
 /*
 Each of the above functions returns `true` if its argument is
 a corresponding type or a value of such a type.
 */
-proc isAtomic(e)    param  return isAtomicValue(e);
+proc isRefIter(e)   param  return isRefIterValue(e);
 
+pragma "no doc" // Not sure how we want to document isPOD* right now
+proc isPOD(e)       param  return isPODValue(e);
 
 // for internal use until we have a better name
 pragma "no doc"
@@ -377,16 +433,16 @@ proc chpl__legalIntCoerce(type t1, type t2) param
 private proc chpl__commonType(type s, type t) type
 {
   if ! isIntegralType(s) then
-    compilerError("Type ", typeToString(s) , " is non-integral: ");
+    compilerError("Type ", s:string , " is non-integral: ");
   if ! isIntegralType(t) then
-    compilerError("Type ", typeToString(t) , " is non-integral: ");
+    compilerError("Type ", t:string , " is non-integral: ");
 
   if numBits(s) > numBits(t) then return s;
   if numBits(s) < numBits(t) then return t;
 
   if isIntType(s) && ! isIntType(t) ||
      isIntType(t) && ! isIntType(s) then
-    compilerError("Types ", typeToString(s) , " and ", typeToString(t), " are incompatible.");
+    compilerError("Types ", s:string , " and ", t:string, " are incompatible.");
 
   return s;
 }
@@ -484,10 +540,8 @@ proc min(type t) where isFloatType(t)        return __primitive( "_min", t);
 
 pragma "no doc"
 proc min(type t) where isComplexType(t) {
-  var x: t;
-  x.re = min(x.re.type);
-  x.im = min(x.im.type);
-  return x;
+  param floatwidth = numBits(t) / 2;
+  return (min(real(floatwidth)), min(real(floatwidth))): t;
 }
 
 // joint documentation, for user convenience
@@ -524,10 +578,8 @@ proc max(type t) where isFloatType(t)        return __primitive( "_max", t);
 
 pragma "no doc"
 proc max(type t) where isComplexType(t) {
-  var x: t;
-  x.re = max(x.re.type);
-  x.im = max(x.im.type);
-  return x;
+  param floatwidth = numBits(t) / 2;
+  return (max(real(floatwidth)), max(real(floatwidth))): t;
 }
 
 pragma "no doc"
@@ -576,14 +628,14 @@ inline proc integral.safeCast(type T) : T where isUintType(T) {
     if isIntType(this.type) {
       // int(?) -> uint(?)
       if this < 0 then // runtime check
-        halt("casting "+typeToString(this.type)+" less than 0 to "+typeToString(T));
+        halt("casting "+this.type:string+" less than 0 to "+T:string);
     }
 
     if max(this.type):uint > max(T):uint {
       // [u]int(?) -> uint(?)
       if (this:uint > max(T):uint) then // runtime check
-        halt("casting "+typeToString(this.type)+" with a value greater than the maximum of "+
-             typeToString(T)+" to "+typeToString(T));
+        halt("casting "+this.type:string+" with a value greater than the maximum of "+
+             T:string+" to "+T:string);
     }
   }
   return this:T;
@@ -597,22 +649,22 @@ inline proc integral.safeCast(type T) : T where isIntType(T) {
       if isUintType(this.type) {
         // uint(?) -> int(?)
         if this:uint > max(T):uint then // runtime check
-          halt("casting "+typeToString(this.type)+" with a value greater than the maximum of "+
-               typeToString(T)+" to "+typeToString(T));
+          halt("casting "+this.type:string+" with a value greater than the maximum of "+
+               T:string+" to "+T:string);
       } else {
         // int(?) -> int(?)
         // max(T) <= max(int), so cast to int is safe
         if this:int > max(T):int then // runtime check
-          halt("casting "+typeToString(this.type)+" with a value greater than the maximum of "+
-               typeToString(T)+" to "+typeToString(T));
+          halt("casting "+this.type:string+" with a value greater than the maximum of "+
+               T:string+" to "+T:string);
       }
     }
     if isIntType(this.type) {
       if min(this.type):int < min(T):int {
         // int(?) -> int(?)
         if this:int < min(T):int then // runtime check
-          halt("casting "+typeToString(this.type)+" with a value less than the minimum of "+
-               typeToString(T)+" to "+typeToString(T));
+          halt("casting "+this.type:string+" with a value less than the minimum of "+
+               T:string+" to "+T:string);
       }
     }
   }

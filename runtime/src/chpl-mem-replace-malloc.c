@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2015 Cray Inc.
+ * Copyright 2004-2016 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -310,8 +310,7 @@ void chpl_mem_replace_malloc_if_needed(void) {
   // functions needed include a "size" function and a "valloc" function:
   // BSD: malloc_size
   // glibc: malloc_usable_size
-  // dlmalloc: dlmalloc_usable_size
-  // tcmalloc: tc_malloc_size
+  // jemalloc: malloc_usable_size
 #endif
 }
 
