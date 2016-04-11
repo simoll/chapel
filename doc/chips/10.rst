@@ -11,13 +11,13 @@ Abstract
 --------
 
 A proposal for when Chapel will introduce record copies and when it
-should destroy records. This proposal will include a description of how
+should destroy records. This proposal includes a description of how
 arrays can be implemented with the new copy semantics.
 
 Rationale
 ---------
 
-Record copy and destruction semantics, while recently improved, continues
+Record copy and destruction semantics, while recently improved, continue
 to be a source of bugs. Memory leaks remain for arrays. Additionally,
 there are many cases in which the current implementation adds obviously
 unnecessary copy calls.
@@ -34,9 +34,7 @@ added.
 Description
 -----------
 
-This document describes when Chapel should create copies of records. How
-a user defines a copy function for a record, its exact name, and whether
-or not it is an initializer are not covered in this proposal.
+This document describes when Chapel should create logical copies of records.
 
 Additionally, record copy semantics as previously implemented in the
 language are tied to array semantics. Therefore, this document attempts
@@ -51,14 +49,18 @@ The User's View
 This section describes how we expect users to think about Chapel's rules
 for inserting copies. We expect that some form of this section would be
 in the language specification. It is an open question how much additional
-detail the specification should include.
+detail the specification should include. One reasonable view is that
+this section might be the view of a domain scientist, while something
+covering the rules below would be available for library authors and
+advanced users.
 
 A variable declaration creates unique storage for a record's fields.  The
 process of returning may or may not provide unique storage for a record.
 The `in` argument intent is treated similarly to a variable declaration
 in that the `in` argument has unique storage for the record's fields.
-The `ref` argument intents do not imply unique storage. A copy may or may
-not be needed in order to ensure that a variable has unique storage.
+The `ref` argument intents do not imply unique storage. A logical copy
+may or may not be needed in order to ensure that a variable has unique
+storage.
 
 What does *unique storage for a record's fields* mean?
 
@@ -70,9 +72,10 @@ What does *unique storage for a record's fields* mean?
   b.x = 2;      // b is a different variable from a, so
   writeln(a.x); // updating b's field x must not change a's field x.
 
-This property does not extend to memory pointed to by a record. The copy
-behavior of data beyond such pointers depends on the record
-implementation.
+This property only extends to class instances pointed to by a record when
+the record is implemented to copy such memory during a logical copy
+operation (in other words, when the `postblit()` method copies fields of
+class type).
 
 This guiding rule is the same whether types are implicit or explicitly
 provided. However, it does not say anything about how a variable is
@@ -87,53 +90,70 @@ This strategy is meant to support the following use cases:
  * strings (see :ref:`strings`)
  * arrays (see :ref:`arrays`)
 
-In particular, if records contain pointers, the expectation is that typical use
-of the record will always copy the pointed-to data, or will always share the
-pointed-to data. Records that sometimes copy the pointed-to data and sometimes
-share it require special care. Arrays and strings are examples of
-records that require special care.
+In particular, if records contain pointers, the expectation is that
+typical use of the record will always copy the pointed-to data, or will
+always share the pointed-to data. Records that sometimes copy the
+pointed-to data and sometimes share it require special care. Arrays and
+strings are examples of records that require special care. Implementing
+such records requires knowledge of further details that are covered in
+the rest of this proposal.
 
 Copy Functions for This Proposal
 --------------------------------
 
-This proposal works with two copy functions:
+This function describes the operations added by the compiler in terms of
+`prim_move`, `copy`, `move`, and `check`. These are not necessarily
+user-visible functions and they exist in this proposal only as a way of
+describing what operations will occur.
 
-  1) `copy(type, src)` and
-  2) `move(type, src)`
+ * `prim_move dst, src` refers to a bit copy as supported in the compiler by
+   PRIM_MOVE.
 
-Both of these return a new record.
+ * `copy(type, src)` refers to a logical copy operation. This logical
+   copy operation can be implemented by a record author and in some cases
+   might be a deep copy.  While other proposals will cover this operation
+   in detail, we currently expect it to correspond to a `postblit()`
+   call. In particular, this AST snippet:
 
-Additionally, to support arrays returning by ref, this proposal will
-use a third function:
+   ::
 
-  3) `check(type, src)`
+    prim_move dst, copy(t, src)
+
+   might be implemented by
+
+   ::
+
+    memcpy(dst, src)
+    dst.postblit()
+
+ * `move(type, src)` refers to a move operation. The move operation
+   is expected to invoke a method on the record type in question
+   to allow it to adjust for the record changing storage location. The
+   move operation won't necessarily be called with the record's final
+   memory location, however. The compiler-generated default `move`
+   operation just bit-copies the argument into the result.
+   It might be overrideable by a `postmove()` method, for example.
+
+ * `check(type, src)` refers to a run-time type check operation.
+   This operation is expected to invoke a method on the record
+   type in question. The compiler-generated default `check` operation
+   would do nothing.
+
+The `copy()`, `move()` and `check()` operations take in a type argument.
+This type argument is only really necessary for types that have
+a runtime component, such as arrays. It could be omitted for types
+that have no runtime component.
 
 This proposal will describe exactly in which situation the compiler will
-introduce `copy()` and `move()` calls. The expectation is that once
-Chapel supports better constructors/initializers, these `copy` and `move`
-calls will be implemented with the appropriate initializers. They could
-remain as functions created by the compiler or they could be replaced
-with the equivalent sequence using an initializer.
-
-If `move` and `copy` are actual functions, then to avoid infinite recursion,
-these functions should not call `move` or `copy` in the process of returning.
-For that reason, these functions must:
-
- * always return the result of a function call or a local variable
-   (but not e.g. a global variable)
- * not use the `ref` return intent
-
-and the compiler should omit any `move` call that would be normally emitted in
-the process of returning from `move` or `copy`.
-
+introduce `copy()` and `move()` and `check()` operations.
 
 The type argument
 -----------------
 
 Arrays and other types that have a runtime type will need this runtime
 type as a run-time argument to the `copy` and `move` functions.  This
-argument needs to be passed to the copy initializer implementing `copy`
-or `move`. It is necessary so that the size of the array can be checked
+argument needs to be passed to the record methods implementing `copy`
+or `move`. It is necessary so that the size of an array can be checked
 appropriately based on an array declaration (for example).
 
 In addition, if some copy calls continue to be added early in compilation
@@ -157,42 +177,47 @@ do. This alternative is described below.
 Where in the compiler are  `copy` and `move` handled?
 -----------------------------------------------------
 
-`copy` and `move` calls could be added in normalize, functionResolution,
-or callDestructors. The current compiler adds copy calls in all of the
+`copy` and `move` operations could be added in normalize, functionResolution,
+or callDestructors. The current compiler adds copy operations in all of the
 above passes. A future implementation could continue to add some copy
-calls in normalize or add all of them during function resolution.
+operations in normalize or add all of them during function resolution.
 
 This is an implementation choice that can be made independently of
 accepting the semantics proposed in this document. For the purposes of
 explanation, however, the main section of this document will describe
-what the AST would look like if the `copy` and `move` calls are added in
+what the AST would look like if the `copy` and `move` operations are added in
 normalize and also describe the AST after resolution.
 
-Note that the `copy` and `move` calls added under this proposal to
+Note that the `copy` and `move` operations added under this proposal to
 support the `in` argument intent must be added during function
 resolution. These cannot be handled in normalize.
 
-Relocating Records
-------------------
+.. commented out
 
-It is legal for a record to be relocated to a new memory location
-without calling either copy or move above if:
+  note: move is actually always called
+  but we might not feel obligated to always keep it that way...
 
- 1) the old and new locations are on the same locale, and
- 2) it is otherwise clear that a reference to the record
-    will no longer be valid.
+  Relocating Records
+  ------------------
 
-The two main cases we have in mind for relocating records are when
-returning a record from a function (although relocating a record is not
-strictly necessary in that case) and when resizing an array.
+  It is legal for a record to be relocated to a new memory location
+  without calling either copy or move above if:
 
-It has not been decided whether or not to allow such relocation across
-locales. This proposal assumes that some function provided by a record
-author needs to be invoked when moving a record across locales. We expect
-that relaxing this rule would not significantly change this proposal.
+   1) the old and new locations are on the same locale, and
+   2) it is otherwise clear that a reference to the record
+      will no longer be valid.
 
-Note that it would not seriously alter this proposal for the `move`
-function to be called in the array-resize case.
+  The two main cases we have in mind for relocating records are when
+  returning a record from a function (although relocating a record is not
+  strictly necessary in that case) and when resizing an array.
+
+  It has not been decided whether or not to allow such relocation across
+  locales. This proposal assumes that some function provided by a record
+  author needs to be invoked when moving a record across locales. We expect
+  that relaxing this rule would not significantly change this proposal.
+
+  Note that it would not seriously alter this proposal for the `move`
+  function to be called in the array-resize case.
 
 Basic Rules
 -----------
@@ -225,7 +250,7 @@ There are 3 broad categories of cases to consider:
  2) Function Return
  3) Nested Call
 
-In order to keep the description short and clear, we will use `f()` and
+In order to keep the description shorter and clearer, we will use `f()` and
 `g()` to indicate function calls to functions that return by value, `a`
 and `b` indicate a variable, `t` to indicate some type, `local` to
 indicate a local variable, and `outerVar` to indicate a variable in an
@@ -278,19 +303,19 @@ types with a runtime component.
 
 ::
 
-  move tmp, f()
-  move t, tmp.type;
-  move a, move(t, tmp)
+  prim_move tmp, f()
+  prim_move t, tmp.type;
+  prim_move a, move(t, tmp)
 
 After resolution, the AST would look like this for an array or other type
 with a runtime type:
 
 ::
 
-  move tmp, f()
-  move t, tmp.type
-  move rtt, getRuntimeType(t)
-  move a, move(rtt, tmp)
+  prim_move tmp, f()
+  prim_move t, tmp.type
+  prim_move rtt, getRuntimeType(t)
+  prim_move a, move(rtt, tmp)
   (on exit: destroy rtt)
 
 (a type without a runtime type would simply omit the `rtt` argument).
@@ -300,8 +325,8 @@ function without the type argument for this case:
 
 ::
 
-  move tmp, f()
-  move a, move(tmp)
+  prim_move tmp, f()
+  prim_move a, move(tmp)
 
 Typed initialization with a function call
 *****************************************
@@ -320,17 +345,17 @@ check that the runtime types match (ie that the arrays have compatible sizes).
 
 ::
 
-  move tmp, f()
-  move a, move(t, tmp)
+  prim_move tmp, f()
+  prim_move a, move(t, tmp)
 
 After function resolution, we would expect the following AST if `t`
 has a runtime component (as with an array):
 
 ::
 
-  move tmp, f()
-  move rtt, getRuntimeType(t)
-  move a, move(rtt, tmp)
+  prim_move tmp, f()
+  prim_move rtt, getRuntimeType(t)
+  prim_move a, move(rtt, tmp)
   (on exit: destroy rtt)
 
 
@@ -352,17 +377,17 @@ by a function returning with `ref` or `const ref` return intent.
 
 ::
 
-  move t, b.type
-  move a, copy(t, b)
+  prim_move t, b.type
+  prim_move a, copy(t, b)
 
 After resolution, the AST would look like this for an array or other type
 with a runtime type:
 
 ::
 
-  move t, b.type
-  move rtt, getRuntimeType(tmp)
-  move a, move(t, tmp)
+  prim_move t, b.type
+  prim_move rtt, getRuntimeType(tmp)
+  prim_move a, move(t, tmp)
 
 (a type without a runtime type would simply omit the `rtt` argument).
 
@@ -372,7 +397,7 @@ without the type argument for this case:
 
 ::
 
-  move a, copy(b)
+  prim_move a, copy(b)
 
 Note that this `copy` could be removed in many cases if the optional
 proposal :ref:`expiring-value-opt` is adopted.
@@ -391,15 +416,15 @@ section also applies if `b` is replaced by a function returning with
 
 ::
 
-  move a, copy(t, b)
+  prim_move a, copy(t, b)
 
 After function resolution, we would expect the following AST if `t`
 has a runtime component (as with an array):
 
 ::
 
-  move rtt, getRuntimeType(t)
-  move a, copy(rtt, b)
+  prim_move rtt, getRuntimeType(t)
+  prim_move a, copy(rtt, b)
   (on exit: destroy rtt)
 
 (a type without a runtime type would simply omit the `rtt` argument).
@@ -444,9 +469,9 @@ array slices (see :ref:`array-slices`).
 
 ::
 
-  move tmp, f()
-  move t, tmp.type
-  move retVar, move(t, tmp)
+  prim_move tmp, f()
+  prim_move t, tmp.type
+  prim_move retVar, move(t, tmp)
   return retVar
 
 After function resolution, we would expect the following AST if `t`
@@ -454,10 +479,10 @@ has a runtime component (as with an array):
 
 ::
 
-  move tmp, f()
-  move t, tmp.type
-  move rtt, getRuntimeType(t)
-  move retVar, move(rtt, tmp)
+  prim_move tmp, f()
+  prim_move t, tmp.type
+  prim_move rtt, getRuntimeType(t)
+  prim_move retVar, move(rtt, tmp)
   (on exit: destroy rtt)
 
 
@@ -491,8 +516,8 @@ this case also helps with array slices (see :ref:`array-slices`).
 
 ::
 
-  move tmp, f()
-  move retVar, move(t, tmp)
+  prim_move tmp, f()
+  prim_move retVar, move(t, tmp)
   return retVar
 
 After function resolution, we would expect the following AST if `t`
@@ -500,9 +525,9 @@ has a runtime component (as with an array):
 
 ::
 
-  move rtt, getRuntimeType(t)
-  move tmp, f()
-  move retVar, move(rtt, tmp)
+  prim_move rtt, getRuntimeType(t)
+  prim_move tmp, f()
+  prim_move retVar, move(rtt, tmp)
   (destroy rtt)
   return retVar
 
@@ -533,8 +558,8 @@ this case also helps with array slices (see :ref:`array-slices`).
 
 ::
 
-  move t, local.type
-  move retVar, move(t, local)
+  prim_move t, local.type
+  prim_move retVar, move(t, local)
   return retVar
 
 After function resolution, we would expect the following AST if `t`
@@ -542,9 +567,9 @@ has a runtime component (as with an array):
 
 ::
 
-  move t, local.type
-  move rtt, getRuntimeType(t)
-  move retVar, move(rtt, local)
+  prim_move t, local.type
+  prim_move rtt, getRuntimeType(t)
+  prim_move retVar, move(rtt, local)
   (destroy rtt)
   return retVar
 
@@ -571,7 +596,7 @@ at least for arrays and other types with runtime types.
 
 ::
 
-  move retVar, move(t, local)
+  prim_move retVar, move(t, local)
   return retVar
 
 After function resolution, we would expect the following AST if `t`
@@ -579,8 +604,8 @@ has a runtime component (as with an array):
 
 ::
 
-  move rtt, getRuntimeType(t)
-  move retVar, move(rtt, local)
+  prim_move rtt, getRuntimeType(t)
+  prim_move retVar, move(rtt, local)
   (destroy rtt)
   return retVar
 
@@ -608,8 +633,8 @@ any `ref`.
 
 ::
 
-  move t, outerVar.type
-  move retVar, copy(t, outerVar)
+  prim_move t, outerVar.type
+  prim_move retVar, copy(t, outerVar)
   return retVar
 
 After function resolution, we would expect the following AST if `t`
@@ -617,9 +642,9 @@ has a runtime component (as with an array):
 
 ::
 
-  move t, outerVar.type
-  move rtt, getRuntimeType(t)
-  move retVar, copy(rtt, local)
+  prim_move t, outerVar.type
+  prim_move rtt, getRuntimeType(t)
+  prim_move retVar, copy(rtt, local)
   (destroy rtt)
   return retVar
 
@@ -630,7 +655,7 @@ other types with runtime types, it could be
 
 ::
 
-  move retVar, copy(outerVar)
+  prim_move retVar, copy(outerVar)
   return retVar
 
 
@@ -661,7 +686,7 @@ ref` argument or in general any `ref`.
 
 ::
 
-  move retVar, copy(t, outerVar)
+  prim_move retVar, copy(t, outerVar)
   return retVar
 
 
@@ -670,8 +695,8 @@ has a runtime component (as with an array):
 
 ::
 
-  move rtt, getRuntimeType(t)
-  move retVar, copy(rtt, outerVar)
+  prim_move rtt, getRuntimeType(t)
+  prim_move retVar, copy(rtt, outerVar)
   (destroy rtt)
   return retVar
 
@@ -698,7 +723,7 @@ is known whether a global variable or the result of a call is returned.
 
 ::
 
-  move exprTmp, f()
+  prim_move exprTmp, f()
   g(exprTmp)
   (on exit: destroy exprTmp)
 
@@ -1468,6 +1493,24 @@ result: `retA` is copied into the record `field` as in the current compiler.
 The section :ref:`automatic-in-arg-intent` describes a strategy that could
 eliminate this unnecessary copy.
 
+Example 7
+*********
+
+.. code-block:: chapel
+
+  config const n = 3;
+  proc retA() :[1..n] int
+  {
+    var A:[1..4] int;
+    return A;
+  }
+
+  var A = retA();
+
+This example shows why `move` needs to be called and needs to take in a
+run-time type argument for arrays. The program shown is a run-time error
+depending on user input, but no `copy` call is necessary.
+
 .. _ref-return-array:
 
 ref return intent for arrays
@@ -1508,12 +1551,12 @@ Here is an example that should work without error:
     return outerArray;
   }
 
-This example should not copy `outerArray` in the process of returning it, since
-it is returning by `ref`. There will be no `move` or `copy` call.  However, a
-`check` call should be invoked in order to possibly perform size checking.  The
-returned reference will point to the `outerArray` `_array` record.  In this
-way, the `ref` has no impact on the lifetime of `outerArray` and will become
-invalid if `outerArray` is destroyed.
+This example should not copy `outerArray` in the process of returning it,
+since it is returning by `ref`. There will be no `move` or `copy` call.
+No `check` call is necessary since `f` does not have a declared return
+type.  The returned reference will point to the `outerArray` `_array`
+record.  In this way, the `ref` has no impact on the lifetime of
+`outerArray` and will become invalid if `outerArray` is destroyed.
 
 It is not legal to return a local variable by ref:
 
