@@ -134,6 +134,20 @@ describing what operations will occur.
    operation just bit-copies the argument into the result.
    It might be overrideable by a `postmove()` method, for example.
 
+   In other words, this AST snippet:
+
+   ::
+
+    prim_move dst, move(t, src)
+
+   might be implemented by
+
+   ::
+
+    memcpy(dst, src)
+    dst.postmove()
+
+
  * `check(type, src)` refers to a run-time type check operation.
    This operation is expected to invoke a method on the record
    type in question. The compiler-generated default `check` operation
@@ -151,14 +165,14 @@ The type argument
 -----------------
 
 Arrays and other types that have a runtime type will need this runtime
-type as a run-time argument to the `copy` and `move` functions.  This
+type as a run-time argument to the `copy` and `move` operations.  This
 argument needs to be passed to the record methods implementing `copy`
 or `move`. It is necessary so that the size of an array can be checked
 appropriately based on an array declaration (for example).
 
-In addition, if some copy calls continue to be added early in compilation
+In addition, if some copy operations continue to be added early in compilation
 in the normalize pass, it is also useful to pass the static type to the
-`copy` and `move` functions for types that do not have a runtime type.
+`copy` and `move` operations for types that do not have a runtime type.
 Doing so enables the compiler to use the same pattern for initialization
 everywhere but to add coercions during resolution. For example:
 
@@ -267,9 +281,9 @@ These AST listings will use `tmp`, `retVar`, `exprtmp`, and `rtt`
 variables.  Of these, only `exprTmp` and `rtt` should be destroyed upon
 return from the function.
 
-The rules cover typed and un-typed cases. The rules make the same `move`
-or `copy` calls whether typed or un-typed. When types are explicit, these
-`move` or `copy` calls need any run-time component of the type in order
+The rules cover typed and un-typed cases. The rules perform the same `move`
+or `copy` operations whether typed or un-typed. When types are explicit, these
+`move` or `copy` operations need any run-time component of the type in order
 to support coercions or to do bounds checking.
 
 Variable Initialization
@@ -294,11 +308,11 @@ Un-typed Initialization with a function call
   var a=f();
 
 Assuming that `f` returns by value (and not with `ref` return intent),
-this example should call the `move` function, transferring the
+this example should perform the `move` operation, transferring the
 responsibility of destroying the returned value to the variable.
 
-It might be possible to omit this `move` call entirely. This proposal keeps
-this `move` call for symmetry with the next case, where it is required for
+It might be possible to omit this `move` operation entirely. This proposal keeps
+this `move` operation for symmetry with the next case, where it is required for
 types with a runtime component.
 
 ::
@@ -336,10 +350,10 @@ Typed initialization with a function call
   var a:t = f();
 
 Assuming that `f` returns by value (and not with `ref` return intent),
-this example should call the `move` function, transferring the
+this example should perform the `move` operation, transferring the
 responsibility of destroying the returned value to the variable.
 
-It might be possible to omit this `move` call entirely, but it is at least
+It might be possible to omit this `move` operation entirely, but it is at least
 necessary to give types with runtime types (such as arrays) an opportunity to
 check that the runtime types match (ie that the arrays have compatible sizes).
 
@@ -370,7 +384,7 @@ Un-typed Initialization from another variable
 
     var a = b;
 
-This example should call the `copy` function. It needs to do so because
+This example should perform the `copy` operation. It needs to do so because
 the new variable, `a`, needs unique storage, since `b` continues to be
 available after this call.  This section also applies if `b` is replaced
 by a function returning with `ref` or `const ref` return intent.
@@ -392,7 +406,7 @@ with a runtime type:
 (a type without a runtime type would simply omit the `rtt` argument).
 
 
-Alternatively, the implementation could support a `move` function
+Alternatively, the implementation could support a `move` operation
 without the type argument for this case:
 
 ::
@@ -409,7 +423,7 @@ Typed Initialization from another variable
 
     var a:t = b;
 
-This example should call the `copy` function for the same reasons as the
+This example should perform the `copy` operation for the same reasons as the
 previous, un-typed case: `a` is a different variable from `b`.  This
 section also applies if `b` is replaced by a function returning with
 `ref` or `const ref` return intent.
@@ -458,14 +472,15 @@ Un-typed Return from a Call Result
     }
 
 Assuming that `f` returns by value (and not with `ref` return intent),
-no `copy` call is necessary under the proposed semantics.
+no `copy` operation is necessary under the proposed semantics.
 The process of returning transfers the responsibility for destroying
 the result of `f` to the caller of `g`.
 
-This case could be implemented without any `move` call, but for symmetry with
-the next case, where the `move` call is required for types with a runtime type,
-a `move` call is included. Including a `move` in this case also helps with
-array slices (see :ref:`array-slices`).
+This case could be implemented without any `move` operation, but for
+symmetry with the next case, where the `move` operation is required for
+types with a runtime type, a `move` operation is included. Including a
+`move` in this case also helps with array slices (see
+:ref:`array-slices`).
 
 ::
 
@@ -510,7 +525,7 @@ function has a declared return type. For arrays, it is necessary to allow
 the array implementation to assert that the runtime type of `f()` is
 compatible with the declared return type `t`.
 
-For that reason, a `move` call is necessary under the proposed semantics, at
+For that reason, a `move` operation is necessary under the proposed semantics, at
 least for arrays and other types with runtime types.  Including a `move` in
 this case also helps with array slices (see :ref:`array-slices`).
 
@@ -547,11 +562,11 @@ Un-typed Return from a Local Variable
       ...;
     }
 
-In this case, no `copy` call is necessary under the proposed
+In this case, no `copy` operation is necessary under the proposed
 semantics. The responsibility for destroying `local` is transferred to
 the caller of `g`.
 
-This case could be implemented without any `move` call, but it is
+This case could be implemented without any `move` operation, but it is
 included for symmetry with the :ref:`untyped-return-call` case and with
 case when the function has  declared return type. Including a `move` in
 this case also helps with array slices (see :ref:`array-slices`).
@@ -591,7 +606,7 @@ declared return type. For arrays, it is necessary to allow the array
 implementation to assert that the runtime type of `local` is compatible
 with the declared return type `t`.
 
-For that reason, a `move` call is necessary under the proposed semantics,
+For that reason, a `move` operation is necessary under the proposed semantics,
 at least for arrays and other types with runtime types.
 
 ::
@@ -729,18 +744,18 @@ is known whether a global variable or the result of a call is returned.
 
 
 If `f` uses the `ref` or `const ref` return intent, and `g` takes in an
-argument by `ref` or `const ref`, no `move` or `copy` call is necessary
+argument by `ref` or `const ref`, no `move` or `copy` operation is necessary
 at this time. If `f` uses `ref` or `const ref` return intent, and `g()`
-takes in its argument with the `in` intent, a `copy` call will be added
+takes in its argument with the `in` intent, a `copy` operation will be added
 as described in the next section.
 
 
 Argument Intents
 ----------------
 
-It is clear that the `in` intent should cause the `copy` function to be
-called in some cases. The current compiler adds `copy` calls (or the
-equivalent) at the start of the body of a function with the `in` intent.
+It is clear that the `in` intent should cause the `copy` operation to be
+added in some cases. The current compiler adds `initCopy` calls
+at the start of the body of a function with the `in` intent.
 However, in order to support optimization of common patterns, this
 proposal recommends that any copying in required by the `in`, and `inout`
 intents be handled by the caller of the function. Doing these copies in
@@ -882,7 +897,7 @@ Return statements inside a function with `ref` or `const ref` return
 intent have the following behavior:
 
  * The `return` statement in a `ref` or `const ref` return intent
-   function does not cause a `move` or `copy` call to be made. The usual
+   function does not cause a `move` or `copy` operation to be added. The usual
    rules for `return` statements are disabled; instead, the `retVar` is
    just set to a created reference. Types with runtime components (such
    as arrays) need  a `check` or some sort of call in order to allow the
@@ -913,7 +928,7 @@ intent have the following behavior:
 Alternatives include:
 
  * enabling some types to specify another type to serve as their `ref` type.
-   In that case, the `move` or `copy` calls would be added as normal, but
+   In that case, the `move` or `copy` operation would be added as normal, but
    would call the `ref` type versions so that the record implementation can
    distinguish between these cases.
 
@@ -924,8 +939,10 @@ Supporting Reference Counting
 
 A record that implements reference counting is supported by this
 proposal. For the purposes of this document, we will call such a record
-`_refcnt`. The `_refcnt` `move` function does nothing (other than
-memcpy). The `_refcnt` `copy` function bumps the reference count.  Any
+`_refcnt`. The `_refcnt` `postmove` function  - which is called in a
+`move` operation - does nothing (other than
+memcpy). The `_refcnt` `postblit` - which is called in a `copy` operation
+- bumps the reference count.  Any
 `ref` to a `_refcnt` record does not cause changes in the reference
 count. Returning with a `ref` return intent does not change the reference
 count.
@@ -1180,7 +1197,7 @@ In this way, a program such as:
     s += x:string;
     return s.localize(); // returns a string pointing to
                          // a buffer freed in this function,
-                         // but the compiler-inserted `move` call
+                         // but the compiler-inserted `move` operation
                          // will be implemented to copy the buffer.
   }
 
@@ -1191,7 +1208,7 @@ from `f` will invoke `move`, which will in turn create a copy.
 
 One issue with this pattern is that it is unclear how to write the `localize`
 function. The initial approach proposed here is to mark `localize` with a
-pragma that indicates that the `move` call should not be invoked when
+pragma that indicates that the `move` operation should not be invoked when
 returning.
 
 Possible alternative strategies might include:
@@ -1201,7 +1218,7 @@ Possible alternative strategies might include:
     wouldn't invoke `move`, code calling `localize` would have to
     be rewritten.
   * instead of `aliasMutable`, use a counter or a second boolean field, so that
-    the first `move` call results in sharing the buffer, but subsequent `move`
+    the first `move` operation results in sharing the buffer, but subsequent `move`
     calls create a copy
   * allow `string` to specify a different `ref` type and mark `localize`
     as returning by `ref`. Make the `ref` type contain the same as the
@@ -1466,11 +1483,12 @@ Array Example 3
    }
    var A = returnExistingArray();
 
-The process of returning from `returnExistingArray` does not create a copy of
-the array `outerA` since it returns with `ref` intent. However, the variable
-initialization for `A` is using a ref and so is treated the same as
-initialization from another variable. That results in a `copy` call. That gives
-in the desired semantics: `A` refers to a different array than `outerA`.
+The process of returning from `returnExistingArray` does not create a
+copy of the array `outerA` since it returns with `ref` intent. However,
+the variable initialization for `A` is using a ref and so is treated the
+same as initialization from another variable. That results in a `copy`
+operation.  That gives in the desired semantics: `A` refers to a
+different array than `outerA`.
 
 Array Example 4
 ***************
@@ -1536,14 +1554,15 @@ Array Example 6
    }
    consumesArray(createArray());
 
-As before, `createArray` does not call `copy` in the process of returning. The
-value returned will be destroyed after the `consumesArray` call. The call to
-`consumesArray` does not create a copy since it is passing by reference. The
-initialization function for `RecordStoringArray` initializes `field` field with
-another variable; therefore a `copy` call is included. That gives an acceptable
-result: `retA` is copied into the record `field` as in the current compiler.
-The section :ref:`automatic-in-arg-intent` describes a strategy that could
-eliminate this unnecessary copy.
+As before, `createArray` does not call `copy` in the process of
+returning. The value returned will be destroyed after the `consumesArray`
+call. The call to `consumesArray` does not create a copy since it is
+passing by reference. The initialization function for
+`RecordStoringArray` initializes `field` field with another variable;
+therefore a `copy` operation is included. That gives an acceptable
+result: `retA` is copied into the record `field` as in the current
+compiler.  The section :ref:`automatic-in-arg-intent` describes a
+strategy that could eliminate this unnecessary copy.
 
 Array Example 7
 ***************
@@ -1561,7 +1580,7 @@ Array Example 7
 
 This example shows why `move` needs to be called and needs to take in a
 run-time type argument for arrays. The program shown is a run-time error
-depending on user input, but no `copy` call is necessary.
+depending on user input, but no `copy` operation is necessary.
 
 .. _ref-return-array:
 
@@ -1604,7 +1623,7 @@ Here is an example that should work without error:
   }
 
 This example should not copy `outerArray` in the process of returning it,
-since it is returning by `ref`. There will be no `move` or `copy` call.
+since it is returning by `ref`. There will be no `move` or `copy` operation.
 No `check` call is necessary since `f` does not have a declared return
 type.  The returned reference will point to the `outerArray` `_array`
 record.  In this way, the `ref` has no impact on the lifetime of
@@ -1637,7 +1656,7 @@ Alternatives:
    blank intent for arrays.
  * As discussed in :ref:`ref-return`, an alternative approach is for the
    `ref` type for `_array` to be a different type that has the same
-   fields. In this way, the `move` and `copy` calls for a `ref(_array)`
+   fields. In this way, the `move` and `copy` operations for a `ref(_array)`
    could perform the actions described here for `makeRef`.
  * If returning a slice of a local array is a program error, we could
    make functions returning arrays by `ref` behave the same as if they
@@ -1679,7 +1698,7 @@ slice to take ownership of the original array. The problem is that the `A`
 variable is destroyed at the end of `f`'s scope.
 
 The proposed strategy will have the slice construction function set
-`isalias` to `true`, and then the `move` call made in the process of
+`isalias` to `true`, and then the `move` operation made in the process of
 returning will create a copy of the array slice.
 
 Slice Example 2
@@ -1701,7 +1720,7 @@ Slice Example 2
   writeln(A);
 
 Currently outputs `0 1 0 0`. Under the proposal, it would output `0 0 0 0`
-because a `move` call is invoked in the `return` from `f` and `isalias` is
+because a `move` operation is invoked in the `return` from `f` and `isalias` is
 true, resulting in a copy.
 
 This proposal does not include a user-facing way to manually restore the
@@ -1798,7 +1817,7 @@ something like this:
     a._arrAlias = _value;
     var ret = new _array(a, a);
     ret.isalias = true;
-    return ret; // no `move` call can be added here,
+    return ret; // no `move` operation can be added here,
                 // because `move` will copy a slice in order
                 // to make Example 1 work
   }
@@ -1814,7 +1833,7 @@ Alternatives:
  * introduce a new type for array slices:
 
    * array slicing could return a new type such as `_arraySlice`
-   * the `move` function from the new type to an `_array` would perform a
+   * the `move` operation from the new type to an `_array` would perform a
      deep copy
 
  * implement the slice construction function to specially handle
@@ -1827,7 +1846,7 @@ _array Implementation Alternatives
 * "ownership bit" idea discussed previously - this approach requires separate
   copy fn for user variable init from return (or some other way to distinguish).
   (see :ref:`distinguish-move-calls`).
-  It could be possible to distinguish `copy` and `move` calls from
+  It could be possible to distinguish `copy` and `move` operations from
   dead/expiring values. (e.g. expiring could be an argument to these
   calls).
   Otherwise, return outerVar would always make a copy. One serious drawback
@@ -1845,7 +1864,7 @@ _array Implementation Alternatives
 
 * Arrays could return always by ref, or sometimes by ref and sometimes by
   value.  This document describes sometimes by ref sometimes by value.
-  If they always returned by ref, Array return `copy` call could set
+  If they always returned by ref, an array return `copy` operation could set
   `isalias` to `true`. Would still want initialization `copy` to do
   something else (copy elements).  Always returning arrays by `ref` is
   more semantically challenging. Slicing, returning local variables
@@ -2055,13 +2074,13 @@ Future Optional Extensions
 
 .. _distinguish-move-calls:
 
-Distinguishing between `move` calls
-+++++++++++++++++++++++++++++++++++
+Distinguishing between `move` operations
+++++++++++++++++++++++++++++++++++++++++
 
-In an argument to `move` calls, distinguish between:
+In an argument to `move` operations, distinguish between:
 
- * `move` calls made as part of function return
- * `move` calls made as part of user variable initialization
+ * `move` operations made as part of function return
+ * `move` operations made as part of user variable initialization
 
 While none of the examples discussed would rely on such behavior, it might be
 useful. In particular, keeping the current reference-counted array
@@ -2247,14 +2266,14 @@ Here we propose that:
     is an expiring value (that is, a value that is dead after the copy
     is made except for a call to destroy it - this call to destroy
     it is required ).
- 2) when the compiler removes such `copy` calls, it replaces them
-    with `move` calls.
+ 2) when the compiler removes such `copy` operations, it replaces them
+    with `move` operations.
 
 There is one case where this behavior might be surprising to a record
 author. Suppose that `R` is a record that contains a `ptr` field of a class
-type. Suppose a `copy` function is defined for `R` that allocates a
+type. Suppose a `postblit` function is defined for `R` that allocates a
 new `ptr` value in the destination and copies the contents of `ptr`.
-Suppose further that a `move` function is defined for `R` that does
+Suppose further that a `postmove` function is defined for `R` that does
 does not perform the deep copy (and is equivalent to a shallow copy).
 
 Now suppose that `g` is an `R` record value storing a pointer, and that
@@ -2283,10 +2302,10 @@ the role played by `x` is instead played by a compiler-introduced
 temporary.
 
 Here we propose that in cases where a record might store a pointer that aliases
-another record, the `move` function be implemented by the record author to call
-the `copy` function. This choice can be made at runtime.  Since the calls to
-`move` under this proposal correspond to all cases where a value is bound to a
-new user variable - by implementing a `move` function a record designer can
+another record, the `postmove` function be implemented by the record author to call
+the `postcopy` function. This choice can be made at runtime.  Since the
+`move` operations under this proposal correspond to all cases where a value is bound to a
+new user variable - by implementing a `postmove` function a record designer can
 control this behavior. We have already observed that there are other reasons
 for the `string` and `_array` implementations to do this - see :ref:`strings`
 and :ref:`arrays`.
@@ -2346,7 +2365,7 @@ some arguments. Perhaps rules could be developed which cause program behavior to
 The argument that the optimization is correct with this rule is that the
 optimization does not change the number of semantic copies (since `in` intent
 implies a `copy`, but one that can be omitted in certain cases). It just moves
-the `copy` call.
+the `copy` operations.
 
 This rule would be met by the record constructor `RecordStoringArray`; then
 once it has the `in` intent, the rule will be met by the `consumesArray`
@@ -2381,7 +2400,7 @@ implement the new behavior. Note that under this proposal, any copies required
 for `in` intent arguments would happen it the call site, but copies required
 for `out` intent arguments would happen in the called function. Function
 resolution also includes PRIM_COERCE logic in insertCasts. This logic can be
-replaced by using the `move` function that takes in a type argument.
+replaced by using the `move` operation that takes in a type argument.
 
 In order to bring up regions of code likely in need of change, here is a list
 of all the places that use chpl__initCopy, chpl__autoCopy, autoCopyMap,
@@ -2398,7 +2417,7 @@ they might need adjustment:
     currently called chpl__initCopy that constructs an array from an
     iterator.
   * scopeResolve adds initCopy calls in some cases when creating a type
-    constructor or object constructor. These could just be `copy` calls.
+    constructor or object constructor. These could just be `copy` operations.
     Better yet, the default constructor could have its arguments marked with
     the `in` intent.
   * normalize.cpp adds initCopy calls - but would be modified to implement
@@ -2418,7 +2437,7 @@ they might need adjustment:
     `autoCopy` call. This logic would not be necessary under this proposal.
   * functionResolution.cpp captureTaskIntentValues adds an autoCopy call
     to handle task intents. A comment there indicates this autoCopy could
-    perhaps be removed. If not, it could be a `copy` call.
+    perhaps be removed. If not, it could be a `copy` operation.
   * functionResolution.cpp replaceInitPrims for FLAG_RUNTIME_TYPE_VALUE
     adds an autoCopy(chpl__convertRuntimeTypeToValue(x)) but under this
     proposal only chpl__convertRuntimeTypeToValue(x) would be necessary.
@@ -2456,7 +2475,7 @@ they might need adjustment:
     of type `string`, or for coforall index variables. The `autoCopy`
     here for `begin` is meant to support array reference counting, but
     arrays would not be reference counted under this proposal. The case
-    for `string` is a workaround that could call the `copy` function
+    for `string` is a workaround that could perform the `copy` operation
     described here. The coforall index variable `autoCopy` may no longer
     be necessary with the proposed semantics.
   * removeUnnecessaryAutoCopyCalls.cpp could be removed
