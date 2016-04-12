@@ -981,18 +981,28 @@ The following is an example implementation of a `_refcnt` type.
     // (not trying to propose the specific names here,
     //  and depending on other initializer work, not all
     //  of these are necessary).
-    proc copy_init(rhs) {
-      this.p = rhs.p;
-      this.pn = rhs.pn;
+    proc postblit() {
+      // called after this is initialized with
+      // a bit copy of another record, as a part of a
+      // copy operation.
+      //
+      // so this.p and this.pn are already initialized.
       retain();
     }
-    proc move_init(rhs) {
-      this.p = rhs.p;
-      this.pn = rhs.pn;
+    proc postmove() {
+      // called after this is initialized with
+      // a bit copy of another record, as a part of
+      // a move operation
+      //
+      // no further action is necessary
+      // the compiler default would also do nothing
+      // this is here just for completeness
     }
   }
 
   proc =(ref lhs:_refcnt, rhs:_refcnt) {
+    // alternatively, could rely on a compiler
+    // = implementation in terms of postblit.
     rhs.retain();
     lhs.release();
     lhs.p = rhs.p;
@@ -1060,9 +1070,33 @@ support that behavior:
 
  * the constructor/initializer for `R` would allocate `buf`.
  * the destructor/deinitializer for `R` would delete `buf`.
- * the `copy` function would create a new `buf` containing a copy
+ * the `copy` operation would create a new `buf` containing a copy
    of the original data
- * the `move` function does nothing other than `memcpy`.
+
+   .. code-block:: chapel
+
+     proc R.postblit() {
+       // called after this is initialized with
+       // a bit copy of another record, as a part of a
+       // copy operation.
+       //
+       // so this.a,b,c,buf are already initialized
+       this.buf = new buffer(buf.d, buf.e, buf.f, buf.g, buf.h);
+     }
+
+ * the `move` operation does nothing other than `memcpy`.
+
+   .. code-block:: chapel
+
+      proc R.postmove() {
+        // called after this is initialized with
+        // a bit copy of another record, as a part of
+        // a move operation
+        //
+        // no further action is necessary
+        // the compiler default would also do nothing
+        // this is here just for completeness
+      }
 
 In the simple case with this pattern, it is impossible or invalid to
 create two user variables `A` and `B` that both store the same `buf`
@@ -1116,8 +1150,26 @@ The implementation envisaged for the `string` record is the following:
  * `move` checks `aliasMutable` and copies the buffer if `true`.
    Otherwise, it shares the buffer between the source and the destination
    of the move.
+
+   .. code-block:: chapel
+
+      proc string.postmove() {
+        // called after this is initialized with
+        // a bit copy of another record, as a part of
+        // a move operation
+        //
+        if this.aliasMutable {
+          // create a new, owned buffer that is a copy of this.buff
+          var new_buf = chpl_here_alloc(...);
+          memcpy(new_buff, this.buff, s.len);
+          this.owned = true;
+          this.buff = new_buf;
+        }
+        // Do nothing aliasMutable is false
+      }
+
  * `copy` creates a new buffer with the same data as the source of the
-   copy
+   copy. This corresponds to the existiting chpl__initCopy for strings.
 
 In this way, a program such as:
 
@@ -1360,7 +1412,7 @@ array by ref). It might be reasonable to make such functions result in
 a compilation error.
 
 A further alternative here would be for the the :ref:`untyped-return-global`
-case to use a different `copy` function, perhaps called `copyRef`, for arrays.
+case to use a different `copy` operation, perhaps called `copyRef`, for arrays.
 In some ways this approach is similar to :ref:`automatic-ref-return` but less
 general.
 
@@ -1370,8 +1422,8 @@ More Array Examples
 (Note that the `isalias` field is `false` for all of the `_array` records in
 these examples).
 
-Example 1
-*********
+Array Example 1
+***************
 
 .. code-block:: chapel
 
@@ -1386,8 +1438,8 @@ is called. `move` is called a second time when initializing the `A` variable
 and again does not perform a deep copy.  Thus, the desired behavior is
 achieved: the array is returned without any copies.
 
-Example 2
-*********
+Array Example 2
+***************
 
 .. code-block:: chapel
 
@@ -1403,8 +1455,8 @@ semantics: `A` refers to a different array than `outerA`. Note that
 :ref:`automatic-ref-return` could transform the above case into the following
 case.
 
-Example 3
-*********
+Array Example 3
+***************
 
 .. code-block:: chapel
 
@@ -1420,8 +1472,8 @@ initialization for `A` is using a ref and so is treated the same as
 initialization from another variable. That results in a `copy` call. That gives
 in the desired semantics: `A` refers to a different array than `outerA`.
 
-Example 4
-*********
+Array Example 4
+***************
 
 .. code-block:: chapel
 
@@ -1452,8 +1504,8 @@ function `consumesArray` takes in `A` by blank intent, which is `ref` for
 arrays, no copy is made when passing the ref returned to that function. That
 gives the desired semantics: no copy is added for this program.
 
-Example 5
-*********
+Array Example 5
+***************
 
 .. code-block:: chapel
 
@@ -1469,8 +1521,8 @@ would not create a copy. `consumesArray` also does not create a copy. Note that
 it would still not make a copy in this case even if it had the `in` argument
 intent.  That gives the desired result: no copy is necessary.
 
-Example 6
-*********
+Array Example 6
+***************
 
 .. code-block:: chapel
 
@@ -1493,8 +1545,8 @@ result: `retA` is copied into the record `field` as in the current compiler.
 The section :ref:`automatic-in-arg-intent` describes a strategy that could
 eliminate this unnecessary copy.
 
-Example 7
-*********
+Array Example 7
+***************
 
 .. code-block:: chapel
 
@@ -1580,7 +1632,7 @@ Alternatives:
    in the process of returning. The `makeRef` call will set `isalias` to `true`
    and perform any necessary run-time type checking.
  * Allow returning a local array by `ref` by relaxing the rule for arrays
-   specifically. That might require `copyRef` and `moveRef` functions.
+   specifically. That might require `copyRef` and `moveRef` operations.
    The current compiler relaxes this rule by making `ref` the same as
    blank intent for arrays.
  * As discussed in :ref:`ref-return`, an alternative approach is for the
@@ -1606,8 +1658,8 @@ generally `false` but set to `true` when a slice is created. It implements
 marks the function implementing array slice with a special pragma to
 prevent it from calling `move` when returning.
 
-Example 1
-*********
+Slice Example 1
+***************
 
 Consider this example program:
 
@@ -1630,8 +1682,8 @@ The proposed strategy will have the slice construction function set
 `isalias` to `true`, and then the `move` call made in the process of
 returning will create a copy of the array slice.
 
-Example 2
-*********
+Slice Example 2
+***************
 
 .. code-block:: chapel
 
@@ -1656,8 +1708,8 @@ This proposal does not include a user-facing way to manually restore the
 old behavior. Note though that the slice function uses a pragma that
 could possibly generalized into a user-facing feature.
 
-Example 3
-*********
+Slice Example 3
+***************
 
 .. code-block:: chapel
 
@@ -1669,8 +1721,8 @@ Example 3
 Currently outputs `0 0 0 0`. Will still do that because `move` for array slice
 from variable initialization will detect `isalias` and perform a full copy.
 
-Example 4
-*********
+Slice Example 4
+***************
 
 .. code-block:: chapel
 
@@ -1682,8 +1734,8 @@ Example 4
 Currently outputs `0 1 0 0`. It could still do that if `=>` is not considered
 normal variable initialization, but more like `ref` initialization.
 
-Example 5
-*********
+Slice Example 5
+***************
 
 .. code-block:: chapel
 
@@ -1715,8 +1767,8 @@ example could also be written:
   writeln(A);
 
 
-Example 6
-*********
+Slice Example 6
+***************
 
 .. code-block:: chapel
 
@@ -1751,7 +1803,7 @@ something like this:
                 // to make Example 1 work
   }
 
-As we have already described, the `move` function for `_array` would
+As we have already described, the `move` operation for `_array` would
 copy the array data in the case of `isalias=true`. For that reason,
 the `slice` function needs to disable the `move` on return.
 
@@ -1809,7 +1861,7 @@ Automatic Ref Return Intent
 
 Certain patterns, such as a chain of functions transforming an array, could be
 optimized beyond what is described in this document. One implementation
-alternative is to use such an optimization to remove unnecessary copies
+alternative is to use a code transformation to remove unnecessary copies
 generated in the cases above.
 
 One example is this program that was discussed earlier:
@@ -1854,21 +1906,33 @@ The `ref` return intent could perhaps be added automatically.
     would be added for user types. The idea is that the new return intent
     should match the default argument intent.
 
-Note that
+Note that for non-array types, it it is already illegal to assign to the
+result of such a call. For example
 
-  * it is already illegal to assign to the result of such a call:
+.. code-block:: chapel
 
-    .. code-block:: chapel
+  var global = 12;
 
-      var global = 12;
+  proc f() {
+    return global;
+  }
 
-      proc f() {
-        return global; 
-      }
+  f() = 1;
 
-      f() = 1;
+results in the error "illegal lvalue in assignment". The transforamtion
+changes this code to:
 
-    results in the error "illegal lvalue in assignment".
+.. code-block:: chapel
+
+  var global = 12;
+
+  proc f() const ref {
+    return global;
+  }
+
+  f() = 1;
+
+in which the assignment to the result of `f()` is still an error.
 
 This transformation preserves the property described in :ref:`user-view`.
 However, it certainly does change program behavior.
@@ -1894,6 +1958,16 @@ Things to watch out for:
    *particular ref argument*. This transformation should probably not
    apply to functions returning arbitrary function calls that
    return a `ref`.
+
+   Alternatives include:
+
+     * functions that always return a ref (including the result of a call
+       or a ref variable) could be candidates for this transformation. In
+       that case, we would probably want to detect common cases of
+       returning a ref to a variable that will go out of scope and make
+       them into compilation errors. Note though that without language
+       changes it is probably not reasonable to expect the compiler to
+       detect all such cases.
 
  * functions returning a reference yield a reference to a variable
    with unknown lifetime (local? global?). It would be a problem
@@ -1932,7 +2006,7 @@ Note that a copy of A would still be made in a case such as
 
 since f() is a reference and is treated as another variable.
 
-This example works with a similar optimization:
+This example is similarly improved by the transformation:
 
 .. code-block:: chapel
 
@@ -1960,6 +2034,15 @@ returned, xform can return by reference:
 In that case, A is modified by each xform call, instead of sometimes being a
 temporary being modified. This difference is observable if A is not dead after
 its use as an argument.
+
+This transformation makes the blank return intent not always `by value`.
+In some cases it would be the same as the `ref` or `const ref` return
+intent. We might consider enabling the `out` intent to be used as an
+explicit return intent that is the alternative to `ref`.  If we did so,
+functions with an `out` return intent would not be eligible for this
+transformation. Additionally, we would probably want to also adopt the
+optional extension :ref:`optimizing-out` for language consistency
+reasons.
 
 Alternatives:
 
@@ -2074,11 +2157,11 @@ certain typical cases such as:
     g(r);
 
 In particular, the example above would not generate any copies - but for
-an array, the version using `=` would amount to a deep copy of the array
+an array, the version using `=` would perform a deep copy of the array
 elements.
 
 The following example shows a scenario in which copies would occur under
-the proposed rules, but where these copies could be optimized away by
+the rules in this section, but where these copies could be optimized away by
 :ref:`expiring-value-opt`.
 
 .. code-block:: chapel
@@ -2103,13 +2186,46 @@ the proposed rules, but where these copies could be optimized away by
     source(tmp_a, tmp_b);
     sink(tmp_a, tmp_b);
 
-This example has these issues under these rules:
- * tmp_a and tmp_b allocate memory and then re-write it
+In particluar, under the rules in this section:
+
+ * tmp_a and tmp_b will allocate memory
+ * before the call to source, tmp_a and tmp_b would be destroyed
+ * then call to source would move the arrays it created into tmp_a and
+   tmp_b
+ * the call to sink would copy tmp_a and tmp_b because the formal
+   argument is a different variable than the actual.
 
 .. _expiring-value-opt:
 
 Eliminating Copies from Expiring Values
 +++++++++++++++++++++++++++++++++++++++
+
+As discussed in the previous section, this program will create extra
+array copies even with all of the optional extensions described up to
+this point:
+
+.. code-block:: chapel
+
+    proc makeArray() {
+      var A:[1..100] int;
+      return A;
+    }
+
+    proc source(out a, out b) {
+      a = makeArray();
+      b = makeArray();
+    }
+
+    proc sink(in a, in b) {
+      writeln(a);
+      writeln(b);
+    }
+
+    var tmp_a:A[1..100] int;
+    var tmp_b:A[1..100] int;
+    source(tmp_a, tmp_b);
+    sink(tmp_a, tmp_b);
+
 
 In addition, a program such as this:
 
@@ -2127,11 +2243,11 @@ creates an extra copy of A that is not needed.
 
 Here we propose that:
 
- 2) the compiler can remove any `copy` if the source of the copy
+ 1) the compiler can remove any `copy` if the source of the copy
     is an expiring value (that is, a value that is dead after the copy
     is made except for a call to destroy it - this call to destroy
     it is required ).
- 3) when the compiler removes such `copy` calls, it replaces them
+ 2) when the compiler removes such `copy` calls, it replaces them
     with `move` calls.
 
 There is one case where this behavior might be surprising to a record
