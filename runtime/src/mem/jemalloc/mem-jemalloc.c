@@ -31,22 +31,6 @@
 #include "chpltypes.h"
 #include "error.h"
 
-
-// TODO it'd be great if there was some way for us to set the number of arenas.
-// jemalloc's default is `4 * logicalCPUs` which is fine for fifo, but for
-// qthreads and muxed, we know how many pthreads will be created at startup.
-// The number of arenas can be set with je_malloc_conf, but that's a compile
-// time constant. We can also set it with JE_MALLOC_CONF, but I think that has
-// to be prior to program execution, I think by the time we get here, we're
-// already too late. I was hoping we just had to set it before the first call
-// to an allocation routine, but that doesn't appear to be the case.
-//
-// A hacky (but easy/straightforward) solution would be do modify jemalloc
-// source. For qthreads we could get rid of the 4x multiplier and just default
-// to the number of logical cpus. See jemalloc.c:1277. Might be worth testing
-// the performance difference in a playground just to see if it's worth
-// investigating further.
-
 static struct shared_heap {
   void* base;
   size_t size;
@@ -144,15 +128,27 @@ static bool null_merge(void *chunk_a, size_t size_a, void *chunk_b, size_t size_
 // *** End chunk hook replacements *** //
 
 
+// helper routine to get a mallctl value
+#define DECLARE_GET_MALLCTL_VALUE(type) \
+static type get_ ## type ##_mallctl_value(const char* mallctl_string) { \
+  type value; \
+  size_t sz; \
+  sz = sizeof(value); \
+  if (je_mallctl(mallctl_string, &value, &sz, NULL, 0) != 0) { \
+    char error_msg[256]; \
+    snprintf(error_msg, sizeof(error_msg), "could not get mallctl value for %s", mallctl_string); \
+    chpl_internal_error(error_msg); \
+  } \
+  return value; \
+}
+DECLARE_GET_MALLCTL_VALUE(size_t);
+DECLARE_GET_MALLCTL_VALUE(unsigned);
+#undef DECLARE_GET_MALLCTL_VALUE
+
+
 // get the number of arenas
 static size_t get_num_arenas(void) {
-  size_t narenas;
-  size_t sz;
-  sz = sizeof(narenas);
-  if (je_mallctl("opt.narenas", &narenas, &sz, NULL, 0) != 0) {
-    chpl_internal_error("could not get number of arenas from jemalloc");
-  }
-  return narenas;
+  return get_size_t_mallctl_value("opt.narenas");
 }
 
 // initialize our arenas (this is required to be able to set the chunk hooks)
@@ -214,22 +210,6 @@ static void replaceChunkHooks(void) {
     }
   }
 }
-
-// helper routines to get a mallctl value
-#define DEFINE_GET_MALLCTL_VALUE(type) \
-static type get_ ## type ##_mallctl_value(const char* mallctl_string) { \
-  type value; \
-  size_t sz; \
-  sz = sizeof(value); \
-  if (je_mallctl(mallctl_string, &value, &sz, NULL, 0) != 0) { \
-    char error_msg[256]; \
-    snprintf(error_msg, sizeof(error_msg), "could not get mallctl value for %s", mallctl_string); \
-    chpl_internal_error(error_msg); \
-  } \
-  return value; \
-}
-DEFINE_GET_MALLCTL_VALUE(size_t);
-DEFINE_GET_MALLCTL_VALUE(unsigned);
 
 // helper routines to get the number of size classes
 static unsigned get_num_small_classes(void) {

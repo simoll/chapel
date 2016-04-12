@@ -568,11 +568,13 @@ def check_environment():
             sys.exit(1)
 
     # find test dir and check for access
-    global test_dir
+    global test_dir, auto_gen_spec_tests
     test_dir = os.path.join(home, "test")
+    auto_gen_spec_tests = os.access(os.path.join(home, "spec"), os.F_OK)
     if (not os.access(test_dir, os.F_OK) or not os.access(test_dir, os.W_OK)
         or not os.access(test_dir, os.X_OK)):
         test_dir = os.path.join(home, "examples")
+        auto_gen_spec_tests = False
         if (not os.access(test_dir, os.F_OK) or not os.access(test_dir, os.W_OK)
             or not os.access(test_dir, os.X_OK)):
             test_dir = os.getcwd()
@@ -999,6 +1001,8 @@ def set_up_executables():
 
 
 def auto_generate_tests():
+    if not auto_gen_spec_tests:
+        return
     path = os.getcwd()
     with cd(home):
         if path == home or path == test_dir and not args.clean_only:
@@ -1086,7 +1090,7 @@ def check_for_duplicates():
     # check for .graph files, and GRAPHFILES
     if args.gen_graphs or args.comp_performance:
         logger.write("[Checking for duplicate .graph files and that all .graph"
-                " files appear in {0}/.*GRAPHFILES]".format(test_dir))
+                " files appear in {0}/*GRAPHFILES]".format(test_dir))
 
         # find GRAPHFILES
         graph_files = [f for f in os.listdir(test_dir) if
@@ -1332,9 +1336,9 @@ class Logger():
         self.logger = logging.getLogger("start_test")
         self.logger.setLevel(logging.DEBUG)
         # console stdout handlers
-        self.console_out = logging.StreamHandler(sys.stdout)
+        self.console_out = StreamHandlerWithException(sys.stdout)
         # file handlers
-        self.file_out = logging.FileHandler(log_file, mode="w")
+        self.file_out = FileHandlerWithException(log_file, mode="w")
         # add them
         self.logger.addHandler(self.console_out)
         self.logger.addHandler(self.file_out)
@@ -1352,8 +1356,34 @@ class Logger():
         self.logger.removeHandler(self.file_out)
 
     def restart(self):
-        self.file_out = logging.FileHandler(log_file, mode="a")
+        self.file_out = FileHandlerWithException(log_file, mode="a")
         self.logger.addHandler(self.file_out)
+
+
+# Override the error handling in Python's built-in logging module, to
+# make sure remotely-executed builds fail if something goes wrong with
+# the infrastructure (network connections, for example).
+# Normally, Python logging ignores such errors, on the assumption that
+# missing log messages are not very important to the application.
+# In this program, however, the logging provides an essential function.
+
+class StreamHandlerWithException(logging.StreamHandler):
+    """
+    Same as StreamHandler except it raises an exception.
+    """
+
+    def handleError(self, record):
+        logging.StreamHandler.handleError(self, record)
+        raise OSError("fatal error, logging.StreamHandler")
+
+class FileHandlerWithException(logging.FileHandler):
+    """
+    Same as FileHandler except it raises an exception.
+    """
+
+    def handleError(self, record):
+        logging.FileHandler.handleError(self, record)
+        raise OSError("fatal error, logging.FileHandler")
 
 
 def printout(so):
