@@ -164,14 +164,23 @@ method, the record author can control whether or not two such records
 that are stored in different variables can share a pointer. One
 application is that the `move` operation can be used to prevent a record
 containing a pointer to freed memory from being returned in the following
-sequence:
+example:
 
 .. code-block:: chapel
 
-  class C { ... }
+  class C {
+    var a:int;
+  }
   record R {
     var ptr:C;
     var isalias:bool;
+    proc deinit() {
+      if !isalias then delete ptr;
+    }
+    proc postblit() {
+      this.ptr = new C(a=this.ptr.a);
+      this.isalias = false;
+    }
   }
   proc makeAlias(const ref r:R) {
     return new R(ptr=r.ptr, isalias=true);
@@ -179,7 +188,8 @@ sequence:
   proc test() {
     var r = new R(...);
     var alias = makeAlias(r);
-    return alias;
+    return alias; // returning alias with ptr==r.ptr 
+                  // but r.ptr is deleted in r's destructor
   }
   var r = test();
   // now does r.ptr refer to freed memory?
