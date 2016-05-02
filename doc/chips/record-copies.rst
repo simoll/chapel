@@ -291,7 +291,7 @@ local var
   .. code-block:: chapel
 
     proc f() {
-      var x:int;
+      var x = ...;
       ... x ...;
     }
 
@@ -301,9 +301,19 @@ outer var
  
   .. code-block:: chapel
 
-    var global = 10;
+    var global:R = ...;
     proc f() {
       ... global ...;
+    }
+
+ref argument
+  a use of a formal argument that has the `ref` or `const ref` intent
+  (or a blank intent that is `ref` or `const ref`).
+ 
+  .. code-block:: chapel
+
+    proc f(const ref arg) {
+      ... arg ...;
     }
 
 ref/ref call
@@ -594,4 +604,10 @@ program erroneous to add the `const ref` return intent to it.
      or an argument, warn that a copy can be removed if the function
      is declared with the `ref` return intent.
 
+`inout` and `out` argument intents
+++++++++++++++++++++++++++++++++++
+
+TODO: describe the semantics of `inout` and `out` argument intents
+(probably drawing from :ref:`record-copies-out-inout` but with less
+implementation detail)
 
