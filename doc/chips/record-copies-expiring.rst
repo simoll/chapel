@@ -22,6 +22,7 @@ Description
 Discussion of how the design in :ref:`record-copies` might be extended
 to generally eliminate unnecessary copies.
 
+TODO: This section needs to be revisited.
 
 Eliminating Copies from Expiring Values
 +++++++++++++++++++++++++++++++++++++++

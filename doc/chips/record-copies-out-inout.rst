@@ -21,6 +21,9 @@ Description
 Discussion of how the design in :ref:`record-copies` might be extended
 to better support `out` and `inout` argument intents.
 
+TODO: This section needs to be revisited to better on the issue.
+Some of the discussion of `out` and `inout` might move to the original
+document, or it might stay here.
 
 Argument Intents
 ----------------

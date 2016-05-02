@@ -21,6 +21,10 @@ Description
 
 Examples supporting the design in :ref:`record-copies`.
 
+TODO: This document needs revisiting to reduce extra concepts.
+In particular, the alternatives sections should probably be commented
+out.
+
 .. _record-copies-ref-count:
 
 Supporting Reference Counting
