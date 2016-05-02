@@ -229,7 +229,7 @@ operation                 value call  local var  outer var  ref argument  ref/re
 variable initialization   move        copy       copy       copy          copy     
 call as `in` argument     move        copy       copy       copy          copy
 value return              move        move       copy/move  copy/move     copy
-ref return                            error            
+ref return                error       error            
 call as `ref` argument                                
 ========================  ==========  =========  =========  ============  ============
 
