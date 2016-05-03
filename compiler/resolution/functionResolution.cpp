@@ -3754,8 +3754,8 @@ FnSymbol* resolveNormalCall(CallExpr* call, bool checkonly) {
   if (bestRef && bestValue && isBetterMatch(bestValue, bestRef, DC, true)) {
     bestRef = NULL; // Don't consider the ref function.
   }
-  // If the ref version or the value version was ambigous, we
-  // set both to be NULL in order to trigger an ambigous resolution
+  // If the ref version or the value version was ambiguous, we
+  // set both to be NULL in order to trigger an ambiguous resolution
   // error.
   bool ambiguousRef = false;
   bool ambiguousValue = false;
