@@ -64,6 +64,49 @@ purposes of this document, it suffices to know that records are destroyed
 when they go out of scope and at that time a `deinit` method is called.
 A typical `deinit` method would free memory used by a pointer field.
 
+Copy and move concepts
+++++++++++++++++++++++
+
+This proposal uses the terminology `copy` and `move`. These terms
+describe how a Chapel program initializes a record variable based upon an
+existing record variable. Both `copy` and `move` create a new variable
+from an initial variable.
+
+After the `copy` operation, both the new variable and the initial
+variable exist separately. Generally speaking, they can both be modified.
+However, they must not refer to the same fields. That is, changing a
+field in the new record variable should not change the corresponding
+field in the initial record variable.
+
+A `move` is when a record variable changes storage location. It is
+similar to a `copy` operation but it represents a transfer rather than
+duplication. In particular, the initial record is no longer available
+after the `move`.  A `move` can be thought of as an optimized form a
+`copy` followed by destruction of the initial record.  After a `move`,
+there is only one record variable - where after a `copy` there are two.
+
+Record authors can adjust copy and move
++++++++++++++++++++++++++++++++++++++++
+
+Records are more flexible if record authors can specify code to run on a
+`copy`.  For example, a record that contains a pointer to a class
+instance can operate as though the data in the class instance were stored
+directly in the record by copying the class instance in each record
+`copy` operation. If a customizeable `copy` were not available, the
+record author would be forced to support the case where two record
+variables point to the same class instance - or to require that
+users of that record include explicity `clone` method calls (for example).
+
+Different languages make a different choice here. C++ and D allow record
+authors to implement some part of a `copy`, but Rust and Swift do not.
+
+The ability to customize a `move` also enhances the utility of records.
+In particular, it allows record authors to better control aliasing for
+pointer fields. This topic is discussed further below in
+:ref:`record-copies-postmove-example` and is also important for several
+record use cases, such as :ref:`record-copies-strings` and
+:ref:`record-copies-arrays`.
+
 Copy and move operations
 ++++++++++++++++++++++++
 
@@ -155,55 +198,9 @@ The `postmove` method
 A record can use a `postmove` method to react to a `move` operation.  As
 with `postblit`, the `this` variable is already initialized with a
 shallow copy at the time that the `postmove` method is called. However,
-in contrast to the `postblit` method, the old instance is generally no
-longer accessible.
+in contrast to the `postblit` method, the initial record variable is destroyed
+by the `move` operation.
 
-The `postmove` method is useful in support records containing pointers
-that sometimes alias and sometimes do not. By specifying a `postmove`
-method, the record author can control whether or not two such records
-that are stored in different variables can share a pointer. One
-application is that the `move` operation can be used to prevent a record
-containing a pointer to freed memory from being returned in the following
-example:
-
-.. code-block:: chapel
-
-  class C {
-    var a:int;
-  }
-  record R {
-    var ptr:C;
-    var isalias:bool;
-    proc deinit() {
-      if !isalias then delete ptr;
-    }
-    proc postblit() {
-      this.ptr = new C(a=this.ptr.a);
-      this.isalias = false;
-    }
-  }
-  proc makeAlias(const ref r:R) {
-    return new R(ptr=r.ptr, isalias=true);
-  }
-  proc test() {
-    var r = new R(...);
-    var alias = makeAlias(r);
-    return alias; // returning alias with ptr==r.ptr 
-                  // but r.ptr is deleted in r's destructor
-  }
-  var r = test();
-  // now does r.ptr refer to freed memory?
-
-The record author could prevent `r` from referring to freed memory in
-this case by providing the following `postmove` method:
-
-.. code-block:: chapel
-
-  proc R.postmove() {
-    if (this.isalias) {
-      this.postblit(); // make a new ptr as a copy of old ptr 
-    }
-  }
 
 If no `postmove` method is provided for a record, the compiler provides
 one. The compiler-provided `postmove` method calls the `postmove` method
@@ -621,3 +618,68 @@ TODO: describe the semantics of `inout` and `out` argument intents
 (probably drawing from :ref:`record-copies-out-inout` but with less
 implementation detail)
 
+.. _record-copies-postmove-example:
+
+Example that uses `postmove`
+++++++++++++++++++++++++++++
+
+The following example is a simplified demonstration of a problem that
+comes up when implementing array slicing (see
+:ref:`record-copying-array-slices`).
+
+The below code declares a record `R` containing a pointer to a class
+instance. The class instance is generally copied when a variable of type
+`R` is copied, but suppose that the record author also needs to support
+explicitly creating a new `R` that has a pointer aliases another `R`'s
+pointer. This can cause a problem if the other record an aliased record
+is destroyed.
+
+.. code-block:: chapel
+
+  class C {
+    var a:int;
+  }
+  record R {
+    var ptr:C;
+    var isalias:bool; // does ptr alias another record?
+                      // ptr will be deleted if isalias==false.
+    proc deinit() {
+      // when deleting an R, delete the class instance if it's
+      // not an alias.
+      if !isalias then delete ptr;
+    }
+    proc postblit() {
+      // when copying an R, also copy the connected class instance.
+      this.ptr = new C(a=this.ptr.a);
+      this.isalias = false;
+    }
+  }
+  // Explicitly create a new R containing a ptr field that aliases r.ptr.
+  proc makeAlias(const ref r:R) {
+    return new R(ptr=r.ptr, isalias=true);
+  }
+
+  proc test() {
+    var r = new R(...);
+    var alias = makeAlias(r);
+    return alias; // returning alias with ptr==r.ptr
+                  // but r.ptr is deleted in r's destructor
+  }
+  var r = test();
+  // now does r.ptr refer to freed memory?
+
+The record author could prevent `r` from referring to freed memory in
+this case by providing the following `postmove` method:
+
+.. code-block:: chapel
+
+  proc R.postmove() {
+    if (this.isalias) {
+      this.postblit(); // make a new ptr as a copy of old ptr
+    }
+  }
+
+With this method, in the process of returning `r` from `test`, the
+`postmove` method will be called on `r`. Since it creates a new copy of
+the `ptr` object, the original `alias.ptr` can safely be destroyed at the
+end of the `test` function.

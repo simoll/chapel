@@ -465,7 +465,7 @@ Alternatives:
    were marked without the `ref` return intent. This is in some ways
    more consistent with the current behavior.
 
-.. _array-slices:
+.. _record-copying-array-slices:
 
 Array slices
 ++++++++++++
