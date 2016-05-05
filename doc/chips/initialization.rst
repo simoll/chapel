@@ -1,6 +1,6 @@
 .. _initialization:
 
-Initialization in Chapel
+Basics of Initialization
 ========================
 
 Status:
@@ -13,13 +13,21 @@ Abstract
 --------
 
 A description of what constitutes initialization and the different kinds
-of initialization in Chapel programs.
+of initialization in Chapel programs for non-generic records and
+non-generic classes.
 
 Rationale
 ---------
 
 This document provides common language for describing initialization
-and some basic understanding of when initialization occurs.
+and some basic understanding of when initialization occurs. While the
+current language specification covers these topics, this document was
+created as part of a group of CHIPs to do with improvements to
+initializaters and initialization. Thus, this document focuses on
+behaviors specific to the new design.
+
+This document provides background for :ref:`Initializers` and
+:ref:`record-copies`.
 
 Description
 -----------
@@ -33,6 +41,12 @@ and `C` is a non-generic class.
 
 Record Initialization
 +++++++++++++++++++++
+
+This section applies to generic records.  Also, these examples are meant
+to be introductory. While these examples should be correct with respect
+to all planned ways to reduce unnecessary record copies, the details of
+these are discussed in other documents.
+
 
 .. code-block:: chapel
 
@@ -59,10 +73,15 @@ or `x.init()` if the first version does not resolve.
 
   var x:R = ...;
   var y:R = x;
-  ... use x and y ...
+  ... uses of both x and y ...
 
-`y` and `x` refer to different record variables.  We say that `y` is
-`copy initialized` from `x`.
+We say that `y` is `copy initialized` from `x`. Since `x` and `y` both
+exist after `y` is initialized, `y` must be initialized as a copy of `x`
+and the variables must not alias - that is, modifications to a field in
+`x` should not cause the corresponding field in `y` to change.
+
+Note that at the time of this writing, specific syntax for specifying how
+a record should be `copy initialized` is still under discussion.
 
 .. code-block:: chapel
 
@@ -86,12 +105,14 @@ causes `field` to be `copy initialized` from `arg`.
   }
   var x:R = returnR();
 
-`x` is initialized to have the same value as `ret` which is returned in
-`returnR`. Since the value moves from `ret` to `x`, we say that `x` is
-`move initialized` from `ret`.
+`x` is initialized to have the same value as `ret`. There are several
+possible mechanisms for how this can be accomplished, but `x` does not
+necessarily need to be `copy initialized` from `ret`. This case is
+discussed in more detail in :ref:`record-copies`.
 
-There are many other situations in which `copy` or `move` initialization
-occur. The document :ref:`record-copies` describes these in detail.
+There are many other situations beyond the examples above in which `copy
+initialization` occurs. The document :ref:`record-copies` describes these
+in detail.
 
 .. code-block:: chapel
 
@@ -106,8 +127,12 @@ the arguments `x` and `y`. Assignment is different from initialization
 because in assignment, the left-hand-side variable has already been
 initialized and is being set again.
 
+
+
 Class Initialization
 ++++++++++++++++++++
+
+This section is a about non-generic classes.
 
 .. code-block:: chapel
 
@@ -142,3 +167,4 @@ Related Documents
  * :ref:`Initializers` describes how initializers can be specified
  * :ref:`record-copies` describes exactly when copy or move
    initialization occur.
+
