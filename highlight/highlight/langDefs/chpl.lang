@@ -27,6 +27,9 @@ Keywords={
     List= { "bool", "complex", "imag", "int", "opaque", "range", "real",
             "string", "uint"
           }
+  },
+  { Id=3,
+    Regex=[[(\w+)\s*\(]]
   }
 }
 
@@ -36,7 +39,7 @@ Strings = {
 
 Comments = {
    { Block=true,
-     Nested=false,
+     Nested=true,
      Delimiter = { [[\/\*]], [[\*\/]] }
    },
    {
