@@ -13,7 +13,7 @@ Abstract
 --------
 
 A proposal for when Chapel will introduce record copy and move
-operations.
+initialization.
 
 Rationale
 ---------
@@ -29,9 +29,13 @@ Description
 
 This document describes the following areas of record semantics:
 
- * `copy` and `move` operations 
+ * `copy` and `move` initialization 
  * `postblit` and `postmove` methods
- * when `copy` and `move` operations are added by the compiler
+ * when `copy` and `move` initialization are added by the compiler
+
+The document :ref:`initialization` establishes the terms
+`initialization`, `copy initialization`, and `move initialization` and is
+a pre-requisite for this document.
 
 Other documents will cover the following:
 
@@ -47,6 +51,7 @@ Other documents will cover the following:
  * how users should think about these record semantics and how the
    semantics might be described in the language specification (see
    :ref:`record-copies-user-view`)
+
 
 Interesting Records
 +++++++++++++++++++
@@ -72,14 +77,14 @@ describe how a Chapel program initializes a record variable based upon an
 existing record variable. Both `copy` and `move` create a new variable
 from an initial variable.
 
-After the `copy` operation, both the new variable and the initial
+After the `copy` initialization, both the new variable and the initial
 variable exist separately. Generally speaking, they can both be modified.
 However, they must not refer to the same fields. That is, changing a
 field in the new record variable should not change the corresponding
 field in the initial record variable.
 
 A `move` is when a record variable changes storage location. It is
-similar to a `copy` operation but it represents a transfer rather than
+similar to a `copy` initialization but it represents a transfer rather than
 duplication. In particular, the initial record is no longer available
 after the `move`.  A `move` can be thought of as an optimized form a
 `copy` followed by destruction of the initial record.  After a `move`,
@@ -92,7 +97,7 @@ Records are more flexible if record authors can specify code to run on a
 `copy`.  For example, a record that contains a pointer to a class
 instance can operate as though the data in the class instance were stored
 directly in the record by copying the class instance in each record
-`copy` operation. If a customizeable `copy` were not available, the
+`copy` initialization. If a customizeable `copy` were not available, the
 record author would be forced to support the case where two record
 variables point to the same class instance - or to require that
 users of that record include explicity `clone` method calls (for example).
@@ -107,39 +112,50 @@ pointer fields. This topic is discussed further below in
 record use cases, such as :ref:`record-copies-strings` and
 :ref:`record-copies-arrays`.
 
-Copy and move operations
-++++++++++++++++++++++++
+Copy and move initialization
+++++++++++++++++++++++++++++
 
 Record copy semantics in Chapel are a combination of two factors.
 
- 1) The compiler adds `copy` or `move` operations
+ 1) The compiler adds `copy` or `move` initialization
  2) The record author implements `postblit` or `postmove` to
-    specify how the record should react to a `copy` or `move` operation.
+    specify how the record should react to a `copy` or `move`
+    initialization.
 
-Note that when a type has a run-time component, move and copy operations
-need to provide the run-time type to the postblit or postmove function
-implemented by the record author. This topic is discussed further in TODO
-ref array copy semantics.
+Note that when a type has a run-time component, move and copy
+initialization needs to provide the run-time type to the postblit or
+postmove function implemented by the record author. This topic is
+discussed further in :ref:`record-copies-arrays`.
 
-The copy operation
-******************
+Copy initialization
+*******************
 
-A `copy` operation can be added by the compiler when initializing a
+A `copy` initialization can be added by the compiler when initializing a
 destination variable with a source expression that might possibly
 continue to exist. A canonical example is:
 
 .. code-block:: chapel
 
   var x = ...;
-  var y = x;    // copy operation occurs here
+  var y = x;    // copy initialization occurs here
   ... use both x and y ...;
 
-The `copy` operation consists of:
+The `copy` initialization consists of:
 
 .. code-block:: chapel
 
   memcpy(dst, src)
   dst.postblit();
+
+Note that the issue of *when* copy or move initialization occurs is
+reasonably independent from how records can react to these
+initializations. In particular, if instead of `postblit` we wanted to
+support `init` methods with a single argument of the same record type,
+then `copy initialization` would just amount to:
+
+.. code-block:: chapel
+
+  dst.init(src);
 
 
 The `postblit` method
@@ -168,12 +184,10 @@ If no `postblit` method is provided for a record, the compiler provides
 one. The compiler-provided `postblit` method calls the `postblit` method
 on each record field in turn.
 
-TODO: the method name `postblit` is not finalized.
+Move initialization
+*******************
 
-The move operation
-******************
-
-The `move` operation is added by the compiler to allow records to react
+A `move` initialization is added by the compiler to allow records to react
 to a record changing storage location. A canonical example is:
 
 .. code-block:: chapel
@@ -182,55 +196,61 @@ to a record changing storage location. A canonical example is:
   proc makeR() {
     return new R(...);
   }
-  var x = makeR();    // move operation occurs here
+  var x = makeR();    // move initialization occurs here
 
 
-The `move` operation consists of:
+The `move` initialization consists of:
 
 .. code-block:: chapel
 
   memcpy(dst, src)
   dst.postmove();
 
+
 The `postmove` method
 *********************
 
-A record can use a `postmove` method to react to a `move` operation.  As
+A record can use a `postmove` method to react to a `move` initialization.  As
 with `postblit`, the `this` variable is already initialized with a
 shallow copy at the time that the `postmove` method is called. However,
 in contrast to the `postblit` method, the initial record variable is destroyed
-by the `move` operation.
-
+by the `move` initialization.
 
 If no `postmove` method is provided for a record, the compiler provides
 one. The compiler-provided `postmove` method calls the `postmove` method
 on each record field in turn.
 
-TODO: the method name `postmove` is not finalized.
 
-
-Choosing between copy and move operations
-+++++++++++++++++++++++++++++++++++++++++
+Choosing between copy and move initialization
++++++++++++++++++++++++++++++++++++++++++++++
 
 .. _copy-move-table:
 
-The following table shows in which situations a copy or move operation is
-added. Each row in this table corresponds to a particular use of an
-expression `<expr>`. Each column indicates the kind the expression
-`<expr>`. Blank spaces indicate that no copy or move operation is
-necessary.
+When one record variable is initialized from another, the compiler must choose
+whether to perform `copy initialization` or `move initialization`.
+
+The following table shows in which situations a copy or move
+initialization is added. Each row in this table corresponds to a
+particular use of an expression `<expr>`. Each column indicates the kind
+the expression `<expr>`. Blank spaces indicate that no copy or move
+initialization is necessary.
 
 ========================  ==========  =========  =========  ============  ============
 operation                 value call  local var  outer var  ref argument  ref/ref call
 ========================  ==========  =========  =========  ============  ============
 variable initialization   move        copy       copy       copy          copy     
+field initialization      move        copy       copy       copy          copy     
 call as `in` argument     move        copy       copy       copy          copy
-value return              move        move       copy/move  copy/move     copy
+value return              move        move       copy (1)   copy (1)      copy
 ref return                error       error            
 call as `ref` argument                                
 ========================  ==========  =========  =========  ============  ============
 
+(1) copy on value return can be skipped according to
+:ref:`automatic-ref-return`.
+
 Here is more detail on each operation:
+
 
 variable initialization
   a variable initialization statement as in
@@ -238,6 +258,21 @@ variable initialization
   .. code-block:: chapel
 
     var a=<expr>;
+
+field initialization
+  a field initialization statement from Phase 1 of an initializer, as in
+
+  .. code-block:: chapel
+
+    record MyRecord {
+      var field:R;
+
+      proc init(...) {
+        field = <expr>;
+        super.init();
+      }
+    }
+
 
 call as `in` argument
   a function call where `<expr>` corresponds to a formal with `in`
@@ -276,7 +311,7 @@ call as `ref` argument
   .. code-block:: chapel
 
     proc f(ref arg) { ... }
-    test(<expr>)
+    f(<expr>)
 
 
 Here is more detail on each expression type. The examples below include
@@ -353,7 +388,7 @@ Return statements inside a function with `ref` or `const ref` return
 intent have the following behavior:
 
  * The `return` statement in a `ref` or `const ref` return intent
-   function does not cause a `move` or `copy` operation to be added. The
+   function does not cause a `move` or `copy` initialization to be added. The
    `retVar` is just set to a created reference.
  * unlike non - `ref` returns, coercions and promotions are disabled for
    a ref return intent function. The type of the returned expression must
@@ -390,7 +425,7 @@ The table above showed `copy/move` for two value return cases:
  * returning an outer variable
  * returning a ref argument
 
-In these cases, it would be legal to use a `copy` operation. However, in
+In these cases, it would be legal to use a `copy` initialization. However, in
 some situations, the `copy` is unnecessary and oculd be removed by adding
 the `ref` or `const ref` return intent to the function.
 
@@ -660,7 +695,7 @@ is destroyed.
   }
 
   proc test() {
-    var r = new R(...);
+    var r = new R(ptr = new C(1));
     var alias = makeAlias(r);
     return alias; // returning alias with ptr==r.ptr
                   // but r.ptr is deleted in r's destructor
@@ -683,3 +718,18 @@ With this method, in the process of returning `r` from `test`, the
 `postmove` method will be called on `r`. Since it creates a new copy of
 the `ptr` object, the original `alias.ptr` can safely be destroyed at the
 end of the `test` function.
+
+
+Open Issues / TODO
+++++++++++++++++++
+
+This method assumes that `postblit` and `postmove` are the methods that
+record authors implement in order to take some action on a record copy or
+move. These details have not been finalized.
+
+Before this design is complete, we need to choose between records
+specifying a `postblit` method or a `copy init` method. In addition, even
+if we choose a `postblit` strategy, the final method names might differ
+from `postblit` and `postmove`.
+
+
