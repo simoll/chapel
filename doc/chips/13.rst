@@ -93,7 +93,7 @@ there is only one record variable - where after a `copy` there are two.
 Record authors can adjust copy and move
 +++++++++++++++++++++++++++++++++++++++
 
-Records are more flexible if record authors can specify code to run on a
+Record authors can specify code to run on a
 `copy`.  For example, a record that contains a pointer to a class
 instance can operate as though the data in the class instance were stored
 directly in the record by copying the class instance in each record
@@ -105,12 +105,47 @@ users of that record include explicity `clone` method calls (for example).
 Different languages make a different choice here. C++ and D allow record
 authors to implement some part of a `copy`, but Rust and Swift do not.
 
-The ability to customize a `move` also enhances the utility of records.
-In particular, it allows record authors to better control aliasing for
-pointer fields. This topic is discussed further below in
-:ref:`record-copies-postmove-example` and is also important for several
-record use cases, such as :ref:`record-copies-strings` and
-:ref:`record-copies-arrays`.
+Record authors can also customize a `move`. In particular, it allows
+record authors to better control aliasing for pointer fields. This topic
+is discussed further below in :ref:`record-copies-postmove-example` and
+is also important for several record use cases, such as
+:ref:`record-copies-strings` and :ref:`record-copies-arrays`.
+
+.. _record-copies-postblit-tbd:
+
+Strategy for Customizing `copy` and `move` TBD
++++++++++++++++++++++++++++++++++++++++++++++++
+
+Note that at the time of this writing, specific syntax for how a record
+can customize `copy` and `move` is still under discussion. The exact
+choice does not matter for the question of *when* the compiler adds
+`copy` or `move` initialization. However, concrete examples in this
+document will use `postblit` and `postmove` as the methods that respond
+to `copy` and `move` respectively. With a `postblit` strategy, these
+methods are called after a shallow copy is made, e.g. a copy
+initialization might consist of:
+
+.. code-block:: chapel
+
+  memcpy(dst, src)
+  dst.postblit();
+
+Similarly, a move initialization might consist of
+
+.. code-block:: chapel
+
+  memcpy(dst, src)
+  dst.postmove();
+
+The main alternative is to use `proc init` for copy and move
+initialization.  In that case, a copy initialization might consist of:
+
+.. code-block:: chapel
+
+  dst.init(src);
+
+How `move` initialization would be customized under the alternative is
+also TBD.
 
 Copy and move initialization
 ++++++++++++++++++++++++++++
@@ -118,48 +153,33 @@ Copy and move initialization
 Record copy semantics in Chapel are a combination of two factors.
 
  1) The compiler adds `copy` or `move` initialization
- 2) The record author implements `postblit` or `postmove` to
-    specify how the record should react to a `copy` or `move`
-    initialization.
+ 2) The record author implements certain methods
+    to specify how the record should react to `copy` or `move`.
 
-Note that when a type has a run-time component, move and copy
-initialization needs to provide the run-time type to the postblit or
-postmove function implemented by the record author. This topic is
-discussed further in :ref:`record-copies-arrays`.
+.. commented out
+
+  Note that when a type has a run-time component, move and copy
+  initialization needs to provide the run-time type to the postblit or
+  postmove function implemented by the record author. This topic is
+  discussed further in :ref:`record-copies-arrays`.
 
 Copy initialization
 *******************
 
-A `copy` initialization can be added by the compiler when initializing a
-destination variable with a source expression that might possibly
-continue to exist. A canonical example is:
+The document :ref:`initialization` provides a canonical example of
+when `copy initialization` occurs:
 
 .. code-block:: chapel
 
-  var x = ...;
-  var y = x;    // copy initialization occurs here
-  ... use both x and y ...;
-
-The `copy` initialization consists of:
-
-.. code-block:: chapel
-
-  memcpy(dst, src)
-  dst.postblit();
-
-Note that the issue of *when* copy or move initialization occurs is
-reasonably independent from how records can react to these
-initializations. In particular, if instead of `postblit` we wanted to
-support `init` methods with a single argument of the same record type,
-then `copy initialization` would just amount to:
-
-.. code-block:: chapel
-
-  dst.init(src);
-
+  var x:R = ...;
+  var y:R = x;    // copy initialization occurs here
+  ... uses of both x and y ...;
 
 The `postblit` method
 *********************
+
+Note that this section discusses one possible approach and has
+not been finalized. See :ref:`record-copies-postblit-tbd`.
 
 A record specifies how it reacts to a copy by providing a `postblit`
 method. At the time that the `postblit` method is called, the `this`
@@ -187,8 +207,8 @@ on each record field in turn.
 Move initialization
 *******************
 
-A `move` initialization is added by the compiler to allow records to react
-to a record changing storage location. A canonical example is:
+Here is an example of when the compiler uses `move` initialization under
+this proposal:
 
 .. code-block:: chapel
 
@@ -199,16 +219,11 @@ to a record changing storage location. A canonical example is:
   var x = makeR();    // move initialization occurs here
 
 
-The `move` initialization consists of:
-
-.. code-block:: chapel
-
-  memcpy(dst, src)
-  dst.postmove();
-
-
 The `postmove` method
 *********************
+
+Note that this section discusses one possible approach and has not been
+finalized. See :ref:`record-copies-postblit-tbd`.
 
 A record can use a `postmove` method to react to a `move` initialization.  As
 with `postblit`, the `this` variable is already initialized with a
@@ -723,13 +738,5 @@ end of the `test` function.
 Open Issues / TODO
 ++++++++++++++++++
 
-This method assumes that `postblit` and `postmove` are the methods that
-record authors implement in order to take some action on a record copy or
-move. These details have not been finalized.
-
-Before this design is complete, we need to choose between records
-specifying a `postblit` method or a `copy init` method. In addition, even
-if we choose a `postblit` strategy, the final method names might differ
-from `postblit` and `postmove`.
-
+See :ref:`record-copies-postblit-tbd`.
 
