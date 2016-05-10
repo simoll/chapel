@@ -18,12 +18,163 @@ initialization.
 Rationale
 ---------
 
-Record copy semantics is an issue that cuts accross many portions of the
-Chapel language design and implementation.  It is our belief that much of
-the complexity in the current implementation stems from lacking a clear
-design incorporating details about when copies are necessary. This
-document is an attempt to solve that problem.
+The existing record semantics presents some language design problems and
+also is not sufficiently defined.
 
+The language specification and other materials do not define record copy
+semantics, or record or array return behavior.
+
+Besides this problem, based upon failed attempts, it appears that the existing
+record semantics is not sufficient for implementing arrays with records.
+
+Furthermore, the current stategy does not generate optimal code.  For example:
+
+.. code-block:: chapel
+
+  proc returnArray() {
+    var A:[1..10] int;
+    return A;
+  }
+
+  proc returnReturnArray() {
+    var B = returnArray();
+    return B;
+  }
+
+  var C = returnReturnArray();
+  writeln(C);
+
+generates two copy calls - when in fact no copy is necessary.
+
+Setting aside the problems of definition and the implementation challenges, the
+existing record semantics can be understood with sample programs. Such sample
+programs reveal one issues with the semantics - that records and arrays have
+very different return behavior.
+
+
+Function Return Behavior
+++++++++++++++++++++++++
+
+In Chapel 1.13, records and arrays have different behavior when
+returned from a function. In particular, records return by value -
+but arrays return by reference. The following example shows the issue.
+
+.. code-block:: chapel
+
+  record R {
+    var element:int;
+  }
+
+  var globalArray:[1..1] int;
+  var globalRecord:R;
+
+  proc returnArray() {
+    return globalArray;
+  }
+  proc returnRecord() {
+    return globalRecord;
+  }
+
+  writeln("globalArray is ", globalArray);
+  writeln("setting returnArray()[1] to 2");
+  returnArray()[1] = 2;
+  writeln("globalArray is now ", globalArray);
+
+  writeln(globalArray);
+
+  writeln("globalRecord is ", globalRecord);
+  writeln("setting returnRecord().element to 3");
+  returnRecord().element = 2;
+  writeln("globalRecord is now ", globalRecord);
+
+The above program has output
+
+::
+
+  globalArray is 0
+  setting returnArray()[1] to 2
+  globalArray is now 2
+  2
+  globalRecord is (element = 0)
+  setting returnRecord().element to 3
+  globalRecord is now (element = 0)
+
+While the language specification does not clearly indicate how this program
+should behave, we can see from the output that modifying the array returned
+from `returnArray` caused a modification to `globalArray` - in other words, the
+array returned by reference. In contrast, modifying the value returned by
+`returnRecord` did not result in a modification to `globalRecord`. The array
+returned by value. 
+
+Note though that in Chapel, both arrays and records are "value types" in that
+when you initialize one variable with another, the data is copied. E.g.
+
+.. code-block:: chapel
+
+  var A:[1..1] int;
+  var B = A;        // initializes B to a copy of A
+  B[1] = 1;
+  writeln(A[1]);
+
+outputs `0` because `B` is initialized to a copy of `A`. Compare with a class
+type - which is not a value type. There, a similar program would output 1.
+
+It is the belief of the author that the language would be better if arrays and
+records both returned in the same way. The arguments for this are:
+
+ * It enables a conceptual model where a 1-length array has similar
+   behavior to a record storing 1 field.
+ * It enables more implementation options for arrays. In particular,
+   it is clear that small arrays could be implemented with stack
+   variables.
+ * It enables us to describe study and optimize only one set of copy semantics
+   that applies to both arrays and records.
+ * It generates clear behavior for records that contain arrays
+   and arrays that contain records.
+
+Additionally, such unification can simplify the compiler implementation by
+removing special case code for arrays.
+ 
+Removing Array Reference Counting
++++++++++++++++++++++++++++++++++
+ 
+The design described in this document was developed in an attempt to adjust
+record and array semantics so that it would be possible to:
+
+ 1) remove array reference counting
+ 2) continue to implement arrays in terms of records
+ 3) remove unnecessary copies
+ 4) allow users to implement custom types with similar behavior to arrays
+
+An implementation of arrays in terms of records without reference counting
+would consist of an `_array` record which contains a pointer to a class storing
+the array data. Since reference counting is not used, the general strategy is
+for these `_array` records to delete the array data when the record goes out of
+scope.
+
+Such a design presents a problem for simple examples using array slicing. For
+example, this program
+
+.. code-block:: chapel
+
+  proc retSlice() {
+    var A:[1..10] int;
+    return A[2..8];
+  }
+
+would, if care is not taken, destroy the memory used by the slide at the end of
+the function body. One trivial solution would be to always copy an array expression upon return, but that is clearly not optimal.
+
+Summary of Goals
+++++++++++++++++
+
+Summarizing, the goals of this effort are to:
+
+ * develop more optimal array and record copy semantics
+ * enable arrays to be implemented in terms
+   of records and without reference counting 
+ * fully describe the record copy semantics
+ 
 Description
 -----------
 
@@ -235,6 +386,39 @@ If no `postmove` method is provided for a record, the compiler provides
 one. The compiler-provided `postmove` method calls the `postmove` method
 on each record field in turn.
 
+What does this document specify?
+++++++++++++++++++++++++++++++++
+
+The following sections of this document describe situations in which a `copy`
+or a `move` is added by the compiler to implement some kind of initialization.
+Now, it might seem that the compiler could choose a variety of strategies to
+implement one of these initializations. In particular, copy initialization
+could be default-initialization followed by assignment. Likewise, move
+initialization could be copy initialization followed by destruction of the
+source variable.
+
+This proposal takes the position that the language needs to provide a minimum
+level of optimization and also provide some reproducability in this area.
+Therefore, the semantics described below should be interpreted to be the
+behavior the Chapel compiler provides in a baseline configuration (e.g. with
+`--baseline`).
+
+It may or may not be worthwhile to allow the compiler to further optimize
+these cases, by replacing some `copy` initializations with `move`
+initialization. On the one hand, there is an advantage to making programs
+always behave the same in this regard. On the other, allowing some
+flexibility here can allow programs to perform better and still operate
+as expected.
+
+This is a complicated issue because it impacts how Chapel users can
+understand Chapel programs. If further optimization is allowed, it either
+needs to be document in detail in the language specification and always
+applied - or, the language specification needs to be somewhat vague about
+when `copy` or `move` is used.
+
+We discuss how to present these record semantics to users in
+:ref:`record-copies-user-view`. We discuss one optimization that could be
+applied in :ref:`record-copies-expiring`. 
 
 Choosing between copy and move initialization
 +++++++++++++++++++++++++++++++++++++++++++++
