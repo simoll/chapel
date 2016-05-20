@@ -286,91 +286,6 @@ arrays in order to simplify the description. The document
 :ref:`record-copies-runtime-types` discusses how runtime types interact
 with this design.
 
-.. commented out
-
-  This document is proposing
-  The What is this design trying to achieve?
-
-  The design should provide users with idioms that they can rely on which
-  are guaranteed not to create a copy. Lastly, if records are sufficient to
-  create Chapel arrays, that is evidence that they are well designed.
-
-  * Array semantics are connected to record semantics
-    - purely from a language design viewpoint, arrays and user records
-      are both ways to store a collection of values
-    - it is a language design goal that a Chapel user should be able
-      to create a type similar to the Chapel array. The record type
-      needs to be capable enough to enable this use case. The record
-      type is really the only type that enables automatic scope-based
-      memory management.
-    - Arrays can be contained in records and records can be contained in
-      arrays.
-
-  Careful optimization of copies in the compiler can apply to both arrays
-  and to records.
-
-  It is the belief of the author that the language would be better if arrays and
-  records both returned in the same way. The arguments for this are:
-
-   * It enables a conceptual model where a 1-length array has similar
-     behavior to a record storing 1 field.
-   * It enables more implementation options for arrays. In particular,
-     it is clear that small arrays could be implemented with stack
-     variables.
-   * It enables us to describe study and optimize only one set of copy semantics
-     that applies to both arrays and records.
-   * It generates clear behavior for records that contain arrays
-     and arrays that contain records.
-   * It is surprising that introducing a temporary variable to capture
-     a function result changes the semantics when the function returns an
-     array. (In particular it causes a copy to be added when it did not
-     previously).
-
-  Additionally, such unification can simplify the compiler implementation by
-  removing special case code for arrays.
-
-  Describe when copy/move occur in words
-
-  Removing Array Reference Counting
-  +++++++++++++++++++++++++++++++++
-   
-  The design described in this document was developed in an attempt to adjust
-  record and array semantics so that it would be possible to:
-
-   1) remove array reference counting
-   2) continue to implement arrays in terms of records
-   3) remove unnecessary copies
-   4) allow users to implement custom types with similar behavior to arrays
-
-  An implementation of arrays in terms of records without reference counting
-  would consist of an `_array` record which contains a pointer to a class storing
-  the array data. Since reference counting is not used, the general strategy is
-  for these `_array` records to delete the array data when the record goes out of
-  scope.
-
-  Such a design presents a problem for simple examples using array slicing. For
-  example, this program
-
-  .. code-block:: chapel
-
-    proc retSlice() {
-      var A:[1..10] int;
-      return A[2..8];
-    }
-
-  would, if care is not taken, destroy the memory used by the slide at the end of
-  the function body. One trivial solution would be to always copy an array expression upon return, but that is clearly not optimal.
-
-  Summary of Goals
-  ++++++++++++++++
-
-  Summarizing, the goals of this effort are to:
-
-   * develop more optimal array and record copy semantics
-   * enable arrays to be implemented in terms
-     of records and without reference counting 
-   * fully describe the record copy semantics
-   
 Preliminaries
 +++++++++++++
 
@@ -467,13 +382,6 @@ Record copy semantics in Chapel are a combination of two factors.
  1) The compiler adds `copy` or `move` initialization
  2) The record author implements certain methods
     to specify how the record should react to `copy` or `move`.
-
-.. commented out
-
-  Note that when a type has a runtime component, move and copy
-  initialization needs to provide the run-time type to the postblit or
-  postmove function implemented by the record author. This topic is
-  discussed further in :ref:`record-copies-arrays`.
 
 Copy initialization
 ^^^^^^^^^^^^^^^^^^^
@@ -806,23 +714,24 @@ being output, since it is copied during the process of returning from
 away. A user might explicitly remove the copies by adding the `const ref`
 return intent to `f`.
 
-A further example is this program:
+A further example is this program discussed in
+:ref:`record-copies-strawman-xform`:
 
 .. code-block:: chapel
 
-  record R { ... }
-
-  proc xform(const ref arg) {
+  proc xform(arg) {
     arg[1] += 1;
     return arg;
   }
 
-  var x:R = ...;
-  var y = xform(xform(xform(x)));
+  config const n = 100000;
+  var A:[1..n] int;
+  var B = xform(xform(xform(A)));
 
 Note that if `arg` had the `in` intent, the rules above would optimize
-away the copies. However, when `arg` has the `const ref` intent, the
-copies can be removed by adding the `const ref` return intent to `xform`.
+away the copies. However, when `arg` has the blank or `ref` intent,
+the copies can be removed by adding the `ref` return intent to
+`xform` - which the rule in this section will do. 
 
 Both of these programs will not have unnecessary copies because of the
 rule described in this section.
@@ -855,155 +764,6 @@ following:
 
 the value returned in `f` is always a reference, but it would make the
 program erroneous to add the `const ref` return intent to it.
-
-.. commented out 
-
-  Note that for a record, it it is already illegal to assign to the result
-  of call not marked with `const ref` return intent. For example
-
-  .. code-block:: chapel
-
-    record R { var x:int; }
-    var global = new R(12);
-
-    proc f() {
-      return global;
-    }
-
-    f() = new R(1);
-
-  results in the error "illegal lvalue in assignment". The transforamtion
-  changes this code to:
-
-  .. code-block:: chapel
-
-    record R { var x:int; }
-    var global = new R(12);
-
-    proc f() const ref {
-      return global;
-    }
-
-    f() = new R(1);
-
-  in which the assignment to the result of `f()` is still an error.
-
-
-.. commented out
-
-  Things to watch out for:
-
-   * returning a reference to a local variable
-     (wouldn't want to change a correct program into an incorrect one)
-     For example,
-
-     .. code-block:: chapel
-
-        proc f() {
-          var x = 12;
-          ref y = x; 
-          return y; 
-        }
-
-        writeln(f());
-
-     This example does not meet the criteria for the transformation above,
-     since it returns neither an *outer scope variable* nor a
-     *particular ref argument*. This transformation should probably not
-     apply to functions returning arbitrary function calls that
-     return a `ref`.
-
-     Alternatives include:
-
-       * functions that always return a ref (including the result of a call
-         or a ref variable) could be candidates for this transformation. In
-         that case, we would probably want to detect common cases of
-         returning a ref to a variable that will go out of scope and make
-         them into compilation errors. Note though that without language
-         changes it is probably not reasonable to expect the compiler to
-         detect all such cases.
-
-   * functions returning a reference to a variable
-     with unknown lifetime (local? global?). It would be a problem
-     if the returned reference has a longer lifetime than
-     the variable it refers to.
-
-  Revisiting our earlier examples,
-
-  .. code-block:: chapel
-
-    var A:[1..3] int;
-
-    proc f() {
-      return A;
-    }
-
-    writeln(f());
-
-  applying the transformation above would change it into the following:
-
-  .. code-block:: chapel
-
-    var A:[1..3] int;
-
-    proc f() ref {
-      return A;
-    }
-
-    writeln(f());
-
-  Note that a copy of A would still be made in a case such as
-
-  .. code-block:: chapel
-
-    var B = f();
-
-  since f() is a reference and is treated as another variable.
-
-  This example is similarly improved by the transformation:
-
-  .. code-block:: chapel
-
-    proc xform(arg) {
-      arg[1] += 1;
-      return arg;
-    }
-
-    var A:[1..4] int;
-    var B = xform(xform(xform(A)));
-
-  Since the array argument to xform is passed by reference and always
-  returned, xform can return by reference:
-
-  .. code-block:: chapel
-
-    proc xform(arg) ref {
-      arg[1] += 1;
-      return arg;
-    }
-
-    var A:[1..4] int;
-    var B = xform(xform(xform(A)));
-
-  In that case, A is modified by each xform call, instead of sometimes being a
-  temporary being modified. This difference is observable if A is not dead after
-  its use as an argument.
-
-  This transformation makes the blank return intent not always `by value`.
-  In some cases it would be the same as the `ref` or `const ref` return
-  intent. We might consider enabling the `out` keyword to be used as an
-  explicit return intent as an alternative to `ref`.  If we did so,
-  functions with an `out` return intent would not be eligible for this
-  transformation. Additionally, we would probably want to also adopt the
-  optional extension :ref:`optimizing-out` for language consistency
-  reasons.
-
-  Alternatives:
-
-   * create a performance warning. When a function always returns a global
-     or an argument, warn that a copy can be removed if the function
-     is declared with the `ref` return intent.
-
 
 TODO
 ----
