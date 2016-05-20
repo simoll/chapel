@@ -5,7 +5,7 @@ See the first CHIP for an overview.
 * [Chapel Improvement Proposals](1.rst)
 * [Initializers](10.rst)
 * [Basics of Initialization](12.rst)
-* [Record Copying in Chapel](13.rst)
+* [Designing Record Copy Semantics to Support Arrays](13.rst)
 * [Constrained Generics](2.rst)
 * [ZeroMQ Integration](3.rst)
 * [Constructor Syntax and Semantics](4.rst)

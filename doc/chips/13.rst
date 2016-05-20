@@ -1,7 +1,7 @@
 .. _record-copies:
 
-Record Copying in Chapel
-========================
+Designing Record Copy Semantics to Support Arrays
+=================================================
 
 Status:
   Draft
@@ -12,22 +12,71 @@ Authors:
 Abstract
 --------
 
-A proposal for when Chapel will introduce record copy and move
-initialization.
+Introduction
+------------
 
-Rationale
----------
+This CHIP seeks to solve the problem of array memory management in
+Chapel. This is an important problem because any array memory leak limits
+the usefulness of the Chapel language. At the same time, since arrays
+are frequently used in Chapel programs, overhead of managing their memory
+impacts the performance of most Chapel programs. Lastly, this issue cuts
+accross language design, compiler implementation, and module code
+implementation.
 
-The existing record semantics presents some language design problems and
-also is not sufficiently defined.
+The current implementation uses array reference counting but that is no
+longer necessary because of changes in the language (see
+http://chapel.cray.com/docs/latest/language/evolution.html#lexical-scoping ).
 
-The language specification and other materials do not define record copy
-semantics, or record or array return behavior.
+While there is general agreement that arrays no longer need reference
+counting, the current semantics make this changing this strategy
+challenging. A simple strategy would be to treat arrays in a similar
+manner to strings - each array variable is freed when it goes out of
+scope and copy causes the array data to be copied into separate memory.
+Problems with this approach include:
 
-Besides this problem, based upon failed attempts, it appears that the existing
-record semantics is not sufficient for implementing arrays with records.
+ * arrays currently return by reference and some idioms depend on this
+   property for performance
+ * returning a slice of a local array is an important idiom
+   that needs to continue to work
 
-Furthermore, the current stategy does not generate optimal code.  For example:
+This CHIP describes an approach to implement arrays using records that
+overcomes these challenges. These arrays will be freed when they go out of
+scope and do not need to include reference counting. In order to make this
+approach work, this CHIP proposes adjustments to the currently implemented
+behavior of both records and arrays.
+
+Existing Approach
++++++++++++++++++
+
+The existing approach to manage array memory is to implement arrays in
+terms of records. These records receive some special treatment within the
+compiler. The implementation works with autoCopy, initCopy, and
+autoDestroy.
+
+ * autoCopy is called when returning a global array or when passing an array to
+   a task function
+ * initCopy is called when assigning an array to a user-level variable
+ * autoDestroy is called when an array variable goes out of scope
+
+In the current implementation, autoCopy initializes a new array variable
+to point to the same array data but increments a reference count for the
+array data.  initCopy allocates new array data and initializes it with
+the old array and sets the reference count for the new array data to 1.
+autoDestroy decrements the reference count for the array data and frees
+the array data if it reaches 0.
+
+While autoCopy and initCopy make some sense as a way to implement array
+reference counting, the current implementation has some drawbacks:
+
+ * it leaks memory for distributed arrays
+ * reference counting is no longer semantically necessary
+ * it adds more copies than are strictly necessary
+ * program performance depends on whether or not the user gives
+   a name to an expression
+
+The example below helps to discuss the last two points. It causes two copy
+initializations where other languages might implement the same pattern without
+any copies.
 
 .. code-block:: chapel
 
@@ -37,27 +86,22 @@ Furthermore, the current stategy does not generate optimal code.  For example:
   }
 
   proc returnReturnArray() {
-    var B = returnArray();
+    var B = returnArray();     // var B = call() causes initCopy()
     return B;
   }
 
-  var C = returnReturnArray();
+  var C = returnReturnArray(); // var C = call() causes initCopy()
   writeln(C);
 
-generates two copy calls - when in fact no copy is necessary.
-
-Setting aside the problems of definition and the implementation challenges, the
-existing record semantics can be understood with sample programs. Such sample
-programs reveal one issues with the semantics - that records and arrays have
-very different return behavior.
-
+Confusingly, adjusting `returnReturnArray` to consist of just `return
+returnArray()` causes the program to generate one fewer initCopy() call.
 
 Function Return Behavior
 ++++++++++++++++++++++++
 
-In Chapel 1.13, records and arrays have different behavior when
-returned from a function. In particular, records return by value -
-but arrays return by reference. The following example shows the issue.
+In Chapel 1.13, records and arrays have different behavior when returned from a
+function. In particular, records return by value - but arrays return by
+reference. The following example shows the issue.
 
 .. code-block:: chapel
 
@@ -99,14 +143,25 @@ The above program has output
   setting returnRecord().element to 3
   globalRecord is now (element = 0)
 
-While the language specification does not clearly indicate how this program
-should behave, we can see from the output that modifying the array returned
-from `returnArray` caused a modification to `globalArray` - in other words, the
-array returned by reference. In contrast, modifying the value returned by
-`returnRecord` did not result in a modification to `globalRecord`. The array
-returned by value. 
+This behaviour might be in conflict with the current language
+specification. In spec version 0.981, section 13.7 says "By default, or
+if the return-intent is const, the function returns a value that cannot
+be used as an lvalue". From that section, we would expect a compilation
+error for this example - for both the array and record cases.  However,
+section 20.2 says "Chapel semantics are defined so that the compiler will
+never need to insert temporary arrays of the same size as a user array
+variable." This implies that returnArray() cannot make a copy of the
+globalArray - since such a copy would need to be in a temporary since
+there is no user variable in which to place that copy.
 
-Note though that in Chapel, both arrays and records are "value types" in that
+In any case, the output of this program is instructive in showing how the
+current implementation behaves. We can see from the output that modifying the
+array returned from `returnArray` caused a modification to `globalArray` - in
+other words, the array returned by reference. In contrast, modifying the value
+returned by `returnRecord` did not result in a modification to `globalRecord`.
+The record returned by value. 
+
+Note though that in Chapel, both arrays and records are `value types` in that
 when you initialize one variable with another, the data is copied. E.g.
 
 .. code-block:: chapel
@@ -119,101 +174,202 @@ when you initialize one variable with another, the data is copied. E.g.
 outputs `0` because `B` is initialized to a copy of `A`. Compare with a class
 type - which is not a value type. There, a similar program would output 1.
 
-It is the belief of the author that the language would be better if arrays and
-records both returned in the same way. The arguments for this are:
 
- * It enables a conceptual model where a 1-length array has similar
-   behavior to a record storing 1 field.
- * It enables more implementation options for arrays. In particular,
-   it is clear that small arrays could be implemented with stack
-   variables.
- * It enables us to describe study and optimize only one set of copy semantics
-   that applies to both arrays and records.
- * It generates clear behavior for records that contain arrays
-   and arrays that contain records.
+Strawman Proposal
++++++++++++++++++
 
-Additionally, such unification can simplify the compiler implementation by
-removing special case code for arrays.
- 
-Removing Array Reference Counting
-+++++++++++++++++++++++++++++++++
- 
-The design described in this document was developed in an attempt to adjust
-record and array semantics so that it would be possible to:
+A strawman proposal helps to identify some of the key issues with array
+copy initialization. Consider a strawman strategy for implementing arrays
+in which they are function similarly to strings:
 
- 1) remove array reference counting
- 2) continue to implement arrays in terms of records
- 3) remove unnecessary copies
- 4) allow users to implement custom types with similar behavior to arrays
+ * arrays return by value (unless the const ref or ref return intent is
+   specified) since that is the behavior for user records
+ * autoDestroy frees the array data, so that array data is freed whenever
+   that array goes out of scope 
+ * initCopy copies of the array data, so that each different variable refers
+   to separate memory and can be independently freed.
 
-An implementation of arrays in terms of records without reference counting
-would consist of an `_array` record which contains a pointer to a class storing
-the array data. Since reference counting is not used, the general strategy is
-for these `_array` records to delete the array data when the record goes out of
-scope.
+Such an approach would run into these several challenges. Three examples
+demonstrate the issues.
 
-Such a design presents a problem for simple examples using array slicing. For
-example, this program
+.. _record-copies-strawman-consume-return:
+
+Passing a Call Result into a Function
+*************************************
 
 .. code-block:: chapel
 
-  proc retSlice() {
+  proc returnArray() {
     var A:[1..10] int;
-    return A[2..8];
+    return A;
   }
 
-would, if care is not taken, destroy the memory used by the slide at the end of
-the function body. One trivial solution would be to always copy an array expression upon return, but that is clearly not optimal.
+  proc consumeArray(A) {
+    writeln(A[1]);
+  }
 
-Summary of Goals
-++++++++++++++++
+  consumeArray(returnArray());
 
-Summarizing, the goals of this effort are to:
+This example is simple enough that it should probably continue to work.
+However, since the blank argument intent for an array indicates `ref` argument
+intent, if `returnArray` returns `const`, it would be a compiler error since
+something that is not an lvalue cannot be passed as a `ref` argument.
 
- * develop more optimal array and record copy semantics
- * enable arrays to be implemented in terms
-   of records and without reference counting 
- * fully describe the record copy semantics
- 
+.. _record-copies-strawman-xform:
+
+Array Transformation Idiom
+**************************
+
+.. code-block:: chapel
+
+  proc xform(arg) {
+    arg[1] += 1;
+    return arg;
+  }
+
+  config const n = 100000;
+  var A:[1..n] int;
+  var B = xform(xform(xform(A)));
+
+This example shows a potential performance problem for one idiom for
+transforming an array in a function call. If arrays return by value, each xform
+call would create a new copy of the array. At the same time, the current
+behavior adds only one copy of the array data when initializing B.
+
+.. _record-copies-strawman-return-slice:
+
+Returning a Slice of a Local Array
+**********************************
+
+.. code-block:: chapel
+
+  proc f() {
+    var A:[1..4] int;
+    return A[2..3];
+  }
+
+  var A_slice = f();
+  writeln(A_slice);
+
+This example program is currently valid and it is desireable that it continue
+to function. However, under the strawman proposal, the slice construction
+A[2..3] would result in a record that points to the same array data as `A`.
+This array data will be freed at the end of `f` and subsequent use of the value
+returned - including to initialize `A_slice` - will be a access invalid memory
+and potentially cause program failure.
+
+
 Description
 -----------
 
-This document describes the following areas of record semantics:
-
- * `copy` and `move` initialization 
- * `postblit` and `postmove` methods
- * when `copy` and `move` initialization are added by the compiler
-
-The document :ref:`initialization` establishes the terms
-`initialization`, `copy initialization`, and `move initialization` and is
-a pre-requisite for this document.
-
-Other documents will cover the following:
-
- * record initialization and destruction (see :ref:`Initializers`)
- * examples: reference counting record, record storing a buffer, and
-   record implementing string (see :ref:`record-copies-examples`)
- * array semantics, assuming arrays continue to be implemented as records
-   (see :ref:`record-copies-arrays`)
- * how `out` and `inout` argument intents could be improved
-   (see :ref:`record-copies-out-inout`)
- * a general copy reduction transformation (see
-   :ref:`record-copies-expiring`)
- * how users should think about these record semantics and how the
-   semantics might be described in the language specification (see
-   :ref:`record-copies-user-view`)
-
-
-Interesting Records
+Summary of Approach
 +++++++++++++++++++
 
-This document is mainly interested in describing the semantics of records
-that contain pointers. For example, a record might contain a field of
-class type. That field is actually a pointer to a class instance. Such
-records rely on when and how record copies are added by the compiler.
+This CHIP seeks to show how arrays can be implemented in terms of records.  It
+does this in three steps. First, it discusses the concepts of `copy
+initialization` and `move initialization`. Then, it proposes rules for both
+arrays and records that indicate when `copy initialization` and `move
+initialization` occur. Finally, it describes how these rules support an
+implementation of arrays in terms of records.
+
+The separate document :ref:`record-copies-examples` discusses how the rules
+described in this document enable other use cases for records.  The documents
+:ref:`record-copies-out-inout` and :ref:`record-copies-expiring` discuss
+improvements to the rules described in this proposal.
+
+TODO: Additionaly, the separate document ... discusses how run-time types
+interact with this design.
+
+.. commented out
+
+  This document is proposing
+  The What is this design trying to achieve?
+
+  The design should provide users with idioms that they can rely on which
+  are guaranteed not to create a copy. Lastly, if records are sufficient to
+  create Chapel arrays, that is evidence that they are well designed.
+
+  * Array semantics are connected to record semantics
+    - purely from a language design viewpoint, arrays and user records
+      are both ways to store a collection of values
+    - it is a language design goal that a Chapel user should be able
+      to create a type similar to the Chapel array. The record type
+      needs to be capable enough to enable this use case. The record
+      type is really the only type that enables automatic scope-based
+      memory management.
+    - Arrays can be contained in records and records can be contained in
+      arrays.
+
+  Careful optimization of copies in the compiler can apply to both arrays
+  and to records.
+
+  It is the belief of the author that the language would be better if arrays and
+  records both returned in the same way. The arguments for this are:
+
+   * It enables a conceptual model where a 1-length array has similar
+     behavior to a record storing 1 field.
+   * It enables more implementation options for arrays. In particular,
+     it is clear that small arrays could be implemented with stack
+     variables.
+   * It enables us to describe study and optimize only one set of copy semantics
+     that applies to both arrays and records.
+   * It generates clear behavior for records that contain arrays
+     and arrays that contain records.
+   * It is surprising that introducing a temporary variable to capture
+     a function result changes the semantics when the function returns an
+     array. (In particular it causes a copy to be added when it did not
+     previously).
+
+  Additionally, such unification can simplify the compiler implementation by
+  removing special case code for arrays.
+
+  Describe when copy/move occur in words
+
+  Removing Array Reference Counting
+  +++++++++++++++++++++++++++++++++
+   
+  The design described in this document was developed in an attempt to adjust
+  record and array semantics so that it would be possible to:
+
+   1) remove array reference counting
+   2) continue to implement arrays in terms of records
+   3) remove unnecessary copies
+   4) allow users to implement custom types with similar behavior to arrays
+
+  An implementation of arrays in terms of records without reference counting
+  would consist of an `_array` record which contains a pointer to a class storing
+  the array data. Since reference counting is not used, the general strategy is
+  for these `_array` records to delete the array data when the record goes out of
+  scope.
+
+  Such a design presents a problem for simple examples using array slicing. For
+  example, this program
+
+  .. code-block:: chapel
+
+    proc retSlice() {
+      var A:[1..10] int;
+      return A[2..8];
+    }
+
+  would, if care is not taken, destroy the memory used by the slide at the end of
+  the function body. One trivial solution would be to always copy an array expression upon return, but that is clearly not optimal.
+
+  Summary of Goals
+  ++++++++++++++++
+
+  Summarizing, the goals of this effort are to:
+
+   * develop more optimal array and record copy semantics
+   * enable arrays to be implemented in terms
+     of records and without reference counting 
+   * fully describe the record copy semantics
+   
+Preliminaries
++++++++++++++
 
 Record Initialization and Destruction
-+++++++++++++++++++++++++++++++++++++
+*************************************
 
 Record initialization and destruction are described in CHIP 10.  For the
 purposes of this document, it suffices to know that records are destroyed
@@ -221,7 +377,7 @@ when they go out of scope and at that time a `deinit` method is called.
 A typical `deinit` method would free memory used by a pointer field.
 
 Copy and move concepts
-++++++++++++++++++++++
+**********************
 
 This proposal uses the terminology `copy` and `move`. These terms
 describe how a Chapel program initializes a record variable based upon an
@@ -242,30 +398,29 @@ after the `move`.  A `move` can be thought of as an optimized form a
 there is only one record variable - where after a `copy` there are two.
 
 Record authors can adjust copy and move
-+++++++++++++++++++++++++++++++++++++++
+***************************************
 
-Record authors can specify code to run on a
-`copy`.  For example, a record that contains a pointer to a class
-instance can operate as though the data in the class instance were stored
-directly in the record by copying the class instance in each record
-`copy` initialization. If a customizeable `copy` were not available, the
-record author would be forced to support the case where two record
-variables point to the same class instance - or to require that
-users of that record include explicity `clone` method calls (for example).
+Record authors can specify code to run on a `copy`.  For example, a record that
+contains a pointer to a class instance can operate as though the data in the
+class instance were stored directly in the record by copying the class instance
+in each record `copy` initialization. If a customizeable `copy` were not
+available, the record author would be forced to support the case where two
+record variables point to the same class instance - or to require that users of
+that record include explicity `clone` method calls (for example).
 
 Different languages make a different choice here. C++ and D allow record
 authors to implement some part of a `copy`, but Rust and Swift do not.
 
 Record authors can also customize a `move`. In particular, it allows
-record authors to better control aliasing for pointer fields. This topic
-is discussed further below in :ref:`record-copies-postmove-example` and
-is also important for several record use cases, such as
-:ref:`record-copies-strings` and :ref:`record-copies-arrays`.
+record authors to better control aliasing for pointer fields. This
+feature is important for handling the issue discussed in the strawman
+proposal :ref:`record-copies-strawman-return-slice`.
+
 
 .. _record-copies-postblit-tbd:
 
 Strategy for Customizing `copy` and `move` TBD
-+++++++++++++++++++++++++++++++++++++++++++++++
+**********************************************
 
 Note that at the time of this writing, specific syntax for how a record
 can customize `copy` and `move` is still under discussion. The exact
@@ -299,7 +454,7 @@ How `move` initialization would be customized under the alternative is
 also TBD.
 
 Copy and move initialization
-++++++++++++++++++++++++++++
+****************************
 
 Record copy semantics in Chapel are a combination of two factors.
 
@@ -315,7 +470,7 @@ Record copy semantics in Chapel are a combination of two factors.
   discussed further in :ref:`record-copies-arrays`.
 
 Copy initialization
-*******************
+^^^^^^^^^^^^^^^^^^^
 
 The document :ref:`initialization` provides a canonical example of
 when `copy initialization` occurs:
@@ -327,7 +482,7 @@ when `copy initialization` occurs:
   ... uses of both x and y ...;
 
 The `postblit` method
-*********************
+^^^^^^^^^^^^^^^^^^^^^
 
 Note that this section discusses one possible approach and has
 not been finalized. See :ref:`record-copies-postblit-tbd`.
@@ -356,7 +511,7 @@ one. The compiler-provided `postblit` method calls the `postblit` method
 on each record field in turn.
 
 Move initialization
-*******************
+^^^^^^^^^^^^^^^^^^^
 
 Here is an example of when the compiler uses `move` initialization under
 this proposal:
@@ -371,7 +526,7 @@ this proposal:
 
 
 The `postmove` method
-*********************
+^^^^^^^^^^^^^^^^^^^^^
 
 Note that this section discusses one possible approach and has not been
 finalized. See :ref:`record-copies-postblit-tbd`.
@@ -386,8 +541,9 @@ If no `postmove` method is provided for a record, the compiler provides
 one. The compiler-provided `postmove` method calls the `postmove` method
 on each record field in turn.
 
-What does this document specify?
-++++++++++++++++++++++++++++++++
+
+Rules for when copy or move initialization occur
+++++++++++++++++++++++++++++++++++++++++++++++++
 
 The following sections of this document describe situations in which a `copy`
 or a `move` is added by the compiler to implement some kind of initialization.
@@ -412,7 +568,7 @@ as expected.
 
 This is a complicated issue because it impacts how Chapel users can
 understand Chapel programs. If further optimization is allowed, it either
-needs to be document in detail in the language specification and always
+needs to be documented in detail in the language specification and always
 applied - or, the language specification needs to be somewhat vague about
 when `copy` or `move` is used.
 
@@ -420,19 +576,16 @@ We discuss how to present these record semantics to users in
 :ref:`record-copies-user-view`. We discuss one optimization that could be
 applied in :ref:`record-copies-expiring`. 
 
-Choosing between copy and move initialization
-+++++++++++++++++++++++++++++++++++++++++++++
 
 .. _copy-move-table:
 
 When one record variable is initialized from another, the compiler must choose
 whether to perform `copy initialization` or `move initialization`.
 
-The following table shows in which situations a copy or move
-initialization is added. Each row in this table corresponds to a
-particular use of an expression `<expr>`. Each column indicates the kind
-the expression `<expr>`. Blank spaces indicate that no copy or move
-initialization is necessary.
+The following table shows in which situations a copy or move initialization is
+added. Each row in this table corresponds to a particular use of an expression
+`<expr>`. Each column indicates the kind the expression `<expr>`. Blank spaces
+indicate that no copy or move initialization is necessary.
 
 ========================  ==========  =========  =========  ============  ============
 operation                 value call  local var  outer var  ref argument  ref/ref call
@@ -845,82 +998,92 @@ program erroneous to add the `const ref` return intent to it.
      or an argument, warn that a copy can be removed if the function
      is declared with the `ref` return intent.
 
-`inout` and `out` argument intents
-++++++++++++++++++++++++++++++++++
 
-TODO: describe the semantics of `inout` and `out` argument intents
-(probably drawing from :ref:`record-copies-out-inout` but with less
-implementation detail)
+TODO
+----
 
-.. _record-copies-postmove-example:
+* describe `inout` and `out` argument intents
+* show how array will be implemented with these rules
 
-Example that uses `postmove`
-++++++++++++++++++++++++++++
+.. commented out
 
-The following example is a simplified demonstration of a problem that
-comes up when implementing array slicing (see
-:ref:`record-copying-array-slices`).
 
-The below code declares a record `R` containing a pointer to a class
-instance. The class instance is generally copied when a variable of type
-`R` is copied, but suppose that the record author also needs to support
-explicitly creating a new `R` that has a pointer aliases another `R`'s
-pointer. This can cause a problem if the other record an aliased record
-is destroyed.
+  `inout` and `out` argument intents
+  ++++++++++++++++++++++++++++++++++
 
-.. code-block:: chapel
+  TODO: describe the semantics of `inout` and `out` argument intents
+  (probably drawing from :ref:`record-copies-out-inout` but with less
+  implementation detail)
 
-  class C {
-    var a:int;
-  }
-  record R {
-    var ptr:C;
-    var isalias:bool; // does ptr alias another record?
-                      // ptr will be deleted if isalias==false.
-    proc deinit() {
-      // when deleting an R, delete the class instance if it's
-      // not an alias.
-      if !isalias then delete ptr;
+  .. _record-copies-postmove-example:
+
+  Example that uses `postmove`
+  ++++++++++++++++++++++++++++
+
+  The following example is a simplified demonstration of a problem that
+  comes up when implementing array slicing (see
+  :ref:`record-copying-array-slices`).
+
+  The below code declares a record `R` containing a pointer to a class
+  instance. The class instance is generally copied when a variable of type
+  `R` is copied, but suppose that the record author also needs to support
+  explicitly creating a new `R` that has a pointer aliases another `R`'s
+  pointer. This can cause a problem if the other record an aliased record
+  is destroyed.
+
+  .. code-block:: chapel
+
+    class C {
+      var a:int;
     }
-    proc postblit() {
-      // when copying an R, also copy the connected class instance.
-      this.ptr = new C(a=this.ptr.a);
-      this.isalias = false;
+    record R {
+      var ptr:C;
+      var isalias:bool; // does ptr alias another record?
+                        // ptr will be deleted if isalias==false.
+      proc deinit() {
+        // when deleting an R, delete the class instance if it's
+        // not an alias.
+        if !isalias then delete ptr;
+      }
+      proc postblit() {
+        // when copying an R, also copy the connected class instance.
+        this.ptr = new C(a=this.ptr.a);
+        this.isalias = false;
+      }
     }
-  }
-  // Explicitly create a new R containing a ptr field that aliases r.ptr.
-  proc makeAlias(const ref r:R) {
-    return new R(ptr=r.ptr, isalias=true);
-  }
-
-  proc test() {
-    var r = new R(ptr = new C(1));
-    var alias = makeAlias(r);
-    return alias; // returning alias with ptr==r.ptr
-                  // but r.ptr is deleted in r's destructor
-  }
-  var r = test();
-  // now does r.ptr refer to freed memory?
-
-The record author could prevent `r` from referring to freed memory in
-this case by providing the following `postmove` method:
-
-.. code-block:: chapel
-
-  proc R.postmove() {
-    if (this.isalias) {
-      this.postblit(); // make a new ptr as a copy of old ptr
+    // Explicitly create a new R containing a ptr field that aliases r.ptr.
+    proc makeAlias(const ref r:R) {
+      return new R(ptr=r.ptr, isalias=true);
     }
-  }
 
-With this method, in the process of returning `r` from `test`, the
-`postmove` method will be called on `r`. Since it creates a new copy of
-the `ptr` object, the original `alias.ptr` can safely be destroyed at the
-end of the `test` function.
+    proc test() {
+      var r = new R(ptr = new C(1));
+      var alias = makeAlias(r);
+      return alias; // returning alias with ptr==r.ptr
+                    // but r.ptr is deleted in r's destructor
+    }
+    var r = test();
+    // now does r.ptr refer to freed memory?
+
+  The record author could prevent `r` from referring to freed memory in
+  this case by providing the following `postmove` method:
+
+  .. code-block:: chapel
+
+    proc R.postmove() {
+      if (this.isalias) {
+        this.postblit(); // make a new ptr as a copy of old ptr
+      }
+    }
+
+  With this method, in the process of returning `r` from `test`, the
+  `postmove` method will be called on `r`. Since it creates a new copy of
+  the `ptr` object, the original `alias.ptr` can safely be destroyed at the
+  end of the `test` function.
 
 
-Open Issues / TODO
-++++++++++++++++++
+  Open Issues / TODO
+  ++++++++++++++++++
 
-See :ref:`record-copies-postblit-tbd`.
+  See :ref:`record-copies-postblit-tbd`.
 
