@@ -31,7 +31,7 @@ While there is general agreement that arrays no longer need reference
 counting, the current semantics make this changing this strategy
 challenging. A simple strategy would be to treat arrays in a similar
 manner to strings - each array variable is freed when it goes out of
-scope and copy causes the array data to be copied into separate memory.
+scope and copy causes the array elements to be copied into separate memory.
 Problems with this approach include:
 
  * arrays currently return by reference and some idioms depend on this
@@ -49,9 +49,11 @@ Existing Approach
 +++++++++++++++++
 
 The existing approach to manage array memory is to implement arrays in
-terms of records. These records receive some special treatment within the
-compiler. The implementation works with autoCopy, initCopy, and
-autoDestroy.
+terms of records. These record implementing arrays is called `_array` and
+it consists mainly of a pointer to a class instance. Thus this strategy
+might be called a `record-wrapped class`. These records receive some
+special treatment within the compiler. The implementation works with
+autoCopy, initCopy, and autoDestroy. 
 
  * autoCopy is called when returning a global array or when passing an array to
    a task function
@@ -59,11 +61,11 @@ autoDestroy.
  * autoDestroy is called when an array variable goes out of scope
 
 In the current implementation, autoCopy initializes a new array variable
-to point to the same array data but increments a reference count for the
-array data.  initCopy allocates new array data and initializes it with
-the old array and sets the reference count for the new array data to 1.
-autoDestroy decrements the reference count for the array data and frees
-the array data if it reaches 0.
+to point to the same array elements but increments a reference count for the
+array elements.  initCopy allocates new array elements and initializes it with
+the old array and sets the reference count for the new array elements to 1.
+autoDestroy decrements the reference count for the array elements and frees
+the array elements if it reaches 0.
 
 While autoCopy and initCopy make some sense as a way to implement array
 reference counting, the current implementation has some drawbacks:
@@ -162,7 +164,7 @@ returned by `returnRecord` did not result in a modification to `globalRecord`.
 The record returned by value. 
 
 Note though that in Chapel, both arrays and records are `value types` in that
-when you initialize one variable with another, the data is copied. E.g.
+when you initialize one variable with another, the elements are copied. E.g.
 
 .. code-block:: chapel
 
@@ -184,10 +186,10 @@ in which they are function similarly to strings:
 
  * arrays return by value (unless the const ref or ref return intent is
    specified) since that is the behavior for user records
- * autoDestroy frees the array data, so that array data is freed whenever
-   that array goes out of scope 
- * initCopy copies of the array data, so that each different variable refers
-   to separate memory and can be independently freed.
+ * autoDestroy frees the array elements, so that array elements are freed
+   whenever that array goes out of scope 
+ * initCopy copies of the array elements, so that each different variable
+   refers to separate memory and can be independently freed.
 
 Such an approach would run into these several challenges. Three examples
 demonstrate the issues.
@@ -234,7 +236,7 @@ Array Transformation Idiom
 This example shows a potential performance problem for one idiom for
 transforming an array in a function call. If arrays return by value, each xform
 call would create a new copy of the array. At the same time, the current
-behavior adds only one copy of the array data when initializing B.
+behavior adds only one copy of the array elements when initializing B.
 
 .. _record-copies-strawman-return-slice:
 
@@ -251,12 +253,13 @@ Returning a Slice of a Local Array
   var A_slice = f();
   writeln(A_slice);
 
-This example program is currently valid and it is desireable that it continue
-to function. However, under the strawman proposal, the slice construction
-A[2..3] would result in a record that points to the same array data as `A`.
-This array data will be freed at the end of `f` and subsequent use of the value
-returned - including to initialize `A_slice` - will be a access invalid memory
-and potentially cause program failure.
+This example program is currently valid and it is desireable that it
+continue to function. However, under the strawman proposal, the slice
+construction A[2..3] would result in a record that points to the same
+array elements as `A`.  These array elements will be freed at the end of
+`f` when `A` goes out of scope. Subsequent use of the value returned -
+including to initialize `A_slice` - will access invalid memory and
+potentially cause program failure.
 
 
 Description
@@ -265,20 +268,23 @@ Description
 Summary of Approach
 +++++++++++++++++++
 
-This CHIP seeks to show how arrays can be implemented in terms of records.  It
-does this in three steps. First, it discusses the concepts of `copy
-initialization` and `move initialization`. Then, it proposes rules for both
-arrays and records that indicate when `copy initialization` and `move
-initialization` occur. Finally, it describes how these rules support an
-implementation of arrays in terms of records.
+This CHIP seeks to show how arrays can be implemented with
+`record-wrapped class`.  It does this in three steps. First, it discusses
+the concepts of `copy initialization` and `move initialization`. Then, it
+proposes rules all records - including the records implementing arrays -
+that indicate when `copy initialization` and `move initialization` occur.
+Finally, it describes how these rules support an implementation of arrays
+in terms of records that does not require reference counting.
 
 The separate document :ref:`record-copies-examples` discusses how the rules
 described in this document enable other use cases for records.  The documents
 :ref:`record-copies-out-inout` and :ref:`record-copies-expiring` discuss
 improvements to the rules described in this proposal.
 
-TODO: Additionaly, the separate document ... discusses how run-time types
-interact with this design.
+Lastly, this document will ignore the issues around run-time types for
+arrays in order to simplify the description. The document
+:ref:`record-copies-runtime-types` discusses how runtime types interact
+with this design.
 
 .. commented out
 
@@ -401,7 +407,7 @@ Record authors can adjust copy and move
 ***************************************
 
 Record authors can specify code to run on a `copy`.  For example, a record that
-contains a pointer to a class instance can operate as though the data in the
+contains a pointer to a class instance can operate as though the fields in the
 class instance were stored directly in the record by copying the class instance
 in each record `copy` initialization. If a customizeable `copy` were not
 available, the record author would be forced to support the case where two
@@ -464,7 +470,7 @@ Record copy semantics in Chapel are a combination of two factors.
 
 .. commented out
 
-  Note that when a type has a run-time component, move and copy
+  Note that when a type has a runtime component, move and copy
   initialization needs to provide the run-time type to the postblit or
   postmove function implemented by the record author. This topic is
   discussed further in :ref:`record-copies-arrays`.
@@ -1003,87 +1009,538 @@ TODO
 ----
 
 * describe `inout` and `out` argument intents
-* show how array will be implemented with these rules
 
-.. commented out
+.. _record-copies-arrays:
 
+Implementing Arrays with a Record-Wrapped Class
++++++++++++++++++++++++++++++++++++++++++++++++
 
-  `inout` and `out` argument intents
-  ++++++++++++++++++++++++++++++++++
+This section describes how Chapel arrays can be implemented based upon
+the rules described above.
 
-  TODO: describe the semantics of `inout` and `out` argument intents
-  (probably drawing from :ref:`record-copies-out-inout` but with less
-  implementation detail)
+Recall that, for the purposes of exposition, this document ignores
+runtime types. The document :ref:`record-copies-runtime-types` will
+discuss how this design works with runtime types.
 
-  .. _record-copies-postmove-example:
+Recall that this document is proposing a strategy for implementing array
+memory management using wrapper records. As with the current
+implementation, this strategy consists of two types that work together:
 
-  Example that uses `postmove`
-  ++++++++++++++++++++++++++++
+ 1) A wrapper record which is currently called `_array`
+ 2) a subclass of `BaseArr`, such as `DefaultRectangularArr`.
+    
+The wrapper record contains a field pointing to an object that is a
+subtype of `BaseArr`. The object in turn stores the size of the array and
+a pointer to the array elements.
 
-  The following example is a simplified demonstration of a problem that
-  comes up when implementing array slicing (see
-  :ref:`record-copying-array-slices`).
+Thus, the `_array` record might be defined as:
 
-  The below code declares a record `R` containing a pointer to a class
-  instance. The class instance is generally copied when a variable of type
-  `R` is copied, but suppose that the record author also needs to support
-  explicitly creating a new `R` that has a pointer aliases another `R`'s
-  pointer. This can cause a problem if the other record an aliased record
-  is destroyed.
+.. code-block:: chapel
 
-  .. code-block:: chapel
+  record _array {
+    var _value;       // pointer to a subclass of BaseArr 
+  }
 
-    class C {
-      var a:int;
-    }
-    record R {
-      var ptr:C;
-      var isalias:bool; // does ptr alias another record?
-                        // ptr will be deleted if isalias==false.
-      proc deinit() {
-        // when deleting an R, delete the class instance if it's
-        // not an alias.
-        if !isalias then delete ptr;
+For exposition purposes, we will also discuss a subclass of BaseArr
+implementing a 1-D zero-based array. This helps to make the design
+presented more concrete but ignores many details that real subclasses of
+BaseArr need to attend to.
+
+This proposal also requires that the each BaseArr subclass contain an
+`isalias:bool` field in addition to the current fields. This field
+supports array aliases and slices.
+
+.. code-block:: chapel
+
+  class SimpleArr : BaseArr {
+    type eltType;                  // the type of an element
+    var n: int;                    // the number of elements in the array
+    var elements: _ddata(eltType); // pointer to the array elements
+    var isalias:bool;              // supporting aliases and slices
+  }
+
+To implement Chapel's array semantics, we need to describe how the
+`_array` wrapper record will respond to `copy` and `move` initialization.
+We do that by defining its `postblit` and `postmove` methods.
+Additionally, we need to sketch how a slice operation works and define
+the destructors for these types.
+
+Implementing Array Copy Initialization
+**************************************
+
+First, the `postblit` method will allocate new array elements and set
+them to a copy of the original elements.
+
+.. code-block:: chapel
+
+  proc _array.postblit() {
+    // at this point, _array's fields are already a bit copy
+    // of the _array we are copy initializing from.
+
+    // Allocate space for new array elements using the same
+    // array size as the source array and copy the elements
+    // into the new memory.
+    _value = _value.clone();
+  }
+
+The `clone` method just creates a new array object and initializes it to
+store a copy of the elements. Here is a complete `clone` method for
+`SimpleArr`:
+
+.. code-block:: chapel
+
+  proc SimpleArr.clone() {
+    // Allocate new array object
+    var ret = new SimpleArr(eltType, n);
+    // Allocate space for the elements
+    ret.elements = _ddata_allocate(eltType, n); 
+    // Bit copy the elements
+    memcpy(ret.elements, this.elements, sizeof(int) * n);
+    // Run the postblit fixup on the elements for non-POD record types
+    if !isPODType(eltType) {
+      for i in 0..#n {
+        ret.elements[i].postblit();
       }
-      proc postblit() {
-        // when copying an R, also copy the connected class instance.
-        this.ptr = new C(a=this.ptr.a);
-        this.isalias = false;
-      }
     }
-    // Explicitly create a new R containing a ptr field that aliases r.ptr.
-    proc makeAlias(const ref r:R) {
-      return new R(ptr=r.ptr, isalias=true);
+  }
+
+Implementing Array Move Initialization
+**************************************
+
+The `postmove` method will check `isalias`. If it is `true`, it will
+create a full copy by running `postblit`. If it is `false`, it needs
+not take any action.
+
+.. code-block:: chapel
+
+  proc _array.postmove() {
+    // at this point, _array's fields are already a bit copy
+    // of the _array we are move initializing from.
+
+    // If isalias is true, create a full copy.
+    if _value.isalias {
+      this.postblit();
     }
+  }
 
-    proc test() {
-      var r = new R(ptr = new C(1));
-      var alias = makeAlias(r);
-      return alias; // returning alias with ptr==r.ptr
-                    // but r.ptr is deleted in r's destructor
+.. _record-copying-array-slices:
+
+Implementing Array slices
+*************************
+
+The `isalias` field is generally `false` but set to `true` when a slice
+is created. As we have seen, `postmove` for `_array` to copies the
+element when `isalias` is `true`. To avoid this behavior when returning
+from the function creating a slice, there is a special pragma to prevent
+it from perfoming a move initialization as part of returning.  (Otherwise
+the slice creation function would always create a copy!).
+
+Here is a sketch of an implementation of dsiSlice for SimpleArray.
+For simplicity we will assume that all slices start from element 0.
+
+.. code-block:: chapel
+
+  pragma "no move on return"
+  proc _array.slice(newSize: int) {
+    return new _array(_value.dsiSlice, isalias=true);
+  }
+
+  proc SimpleArray.dsiSlice(newSize: int) {
+    // Create a new SimpleArray pointing to the same data
+    // but with a different length
+    return new SimpleArr(eltType, newSize, elements);
+  }
+
+
+Implementing _array Destruction
+*******************************
+
+Destruction for _array is simple - it just deletes the array object.
+
+.. code-block:: chapel
+
+  proc _array.deinit() {
+    delete _value;
+  }
+
+Destruction for SimpleArr is still simple but it only destroys the
+elements if isalias==false.
+
+.. code-block:: chapel
+
+  proc SimpleArr.deinit() {
+    // Don't delete elements if isalias=true
+    if ! isalias then
+      delete elements;
+  }
+
+Relaxing lvalue checking for array temporaries
+**********************************************
+
+Because arrays frequently return by value, the compiler will need to
+relax l-value checking when promoting a temporary _array to a `ref`. This
+addresses the problem discussed above in
+:ref:`record-copies-strawman-consume-return`.
+
+The language specification would be updated to indicate that non-lvalues
+of array type can be captured in a reference.
+
+Changing what a ref to an array means
+*************************************
+
+The current compiler ignores the argument or return `ref` intent for
+`_array` since it views `_array` as already being a reference to an array
+object.
+
+This proposal changes this behavior. Instead of viewing `_array` as
+already being a reference, it treats a reference to an `_array` similarly
+to a reference to any other record. (In implementation terms, a reference to
+an array becomes `_ref(_array)`).
+
+This is an implementation issue and does not impact the language
+specification.
+
+
+Example Array Programs
+++++++++++++++++++++++
+
+Now that we have defined `copy` and `move` initialization for arrays and
+indicated how the compiler works with references to arrays, this section
+discusses many example programs working with arrays in order to validate
+that the design.
+
+For each of these examples, we will point out when `copy` or `move`
+initialization occur and discuss whether the proposed behavior is
+different from the current behavior as implemented in Chapel v1.13.
+
+Returning a Local Array
+***********************
+
+.. code-block:: chapel
+
+   proc createArray() {
+     var retA: [1..10000] real;
+     return retA;
+   }
+   var A = createArray();
+
+`retA` is an `_array`. In the process of returning from `createArray`, a
+`move` initialization occurs. A second `move` initialization is used to
+initializing the `A` variable and again does not perform a deep copy.
+Thus, the desired behavior is achieved: the array is returned without any
+copies.
+
+The current implementation creates an `initCopy` call for the variable
+initialization of `A` in this example.
+
+Returning a Global Array with ref Return Intent
+***********************************************
+
+.. code-block:: chapel
+
+   var globalArray: [1..10000] real;
+   proc returnGlobalArray() ref {
+     return globalArray;
+   }
+   var A = returnGlobalArray();
+
+The process of returning from `returnGlobalArray` does not perform any
+copy or move initialization since it returns with `ref` intent. However,
+the variable initialization for `A` is using a ref and so is treated the
+same as initialization from another variable. That results in a `copy`
+operation. That gives in the desired semantics: `A` refers to a
+different array than `outerA`.
+
+The current implementation creates an `initCopy` call for the variable
+initialization of `A` in this example.
+
+
+Returning a Global Array
+************************
+
+.. code-block:: chapel
+
+   var globalArray: [1..10000] real;
+   proc returnGlobalArray() {
+     return globalArray;
+   }
+   var A = returnGlobalArray();
+
+The :ref:`automatic-ref-return` transformation applies to this example.
+Since `returnGlobalArray` is returning a global, the transformation
+applies. After that, this case is equivalent to the previous example.
+
+Returning an argument
+*********************
+
+.. code-block:: chapel
+
+  var A:[1..3] int;
+
+  proc f(arg) {
+    return arg; // copy created as part of returning
+  }
+
+  writeln(f(A));
+
+As with the previous example, the :ref:`automatic-ref-return`
+transformation applies to this example, and so it includes no `copy` or
+`move` initializations.
+
+The current behavior is for `f` to add an `autoCopy` in the process of
+returning.
+
+
+Passing a Returned Global Array
+*******************************
+
+.. code-block:: chapel
+
+   var globalArray: [1..10000] real;
+   proc returnGlobalArray() {
+     return globalArray;
+   }
+   proc consumesArray(A:[] real) {
+     writeln(A[1]);
+   }
+   consumesArray(returnExistingArray());
+
+As with the above example, the :ref:`automatic-ref-return` transformation
+applies. It makes this program equivalent to one where
+`returnGlobalArray` is declared with `ref` return intent.
+`returnExistingArray` does not create a copy in the process of returning
+with the `ref` intent. Since the function `consumesArray` takes in `A` by
+blank intent, which is `ref` for arrays, no copy is made when passing the
+ref returned to that function. That gives the desired semantics: no copy
+is added for this program.
+
+The current behavior with this program is for `returnGlobalArray` to
+include an `autoCopy`.
+
+Passing a Returned Local Array
+******************************
+
+.. code-block:: chapel
+
+   proc createArray() {
+     var retA: [1..10000] real;
+     return retA;
+   }
+   proc consumesArray(A:[] real) {
+     writeln(A[1]);
+   }
+   consumesArray(createArray());
+
+As we have previously discussed, the process of returning from
+`createArray` would not create a copy. The call to `consumesArray` also
+does not create a copy. Note that it would still not make a copy in this
+case even if it had the `in` argument intent.  That gives the desired
+result: no copy is necessary.
+
+The current behavior with this snippet is that it does not produce an
+`autoCopy` or `initCopy` calls.
+
+Initializing a Record Field with an Array Argument
+**************************************************
+
+.. code-block:: chapel
+
+   record RecordStoringArray{ var field; }
+   proc createArray() {
+     var retA: [1..10000] real;
+     return retA;
+   }
+   proc consumesArray(A:[] real) {
+     return new RecordStoringArray(A);
+   }
+   consumesArray(createArray());
+
+As before, `createArray` does not call `copy` in the process of
+returning. The value returned will be destroyed after the `consumesArray`
+call. The call to `consumesArray` does not create a copy since it is
+passing by reference. The initialization function for
+`RecordStoringArray` initializes `field` field with another variable;
+therefore a `copy` operation is included. That gives an acceptable
+result: `retA` is copied into the record `field` as in the current
+compiler.  (Note that it might be possible to eliminate this unnecessary
+copy if `A` has `in` argument intent).
+
+The current behavior is to generate an autoCopy and an initCopy of `A`
+when initializing the record in this example.
+
+
+Returning a Local Array with ref Return Intent
+**********************************************
+
+.. code-block:: chapel
+
+  proc f() ref {
+    var localArray:[1..100] int;
+    return localArray; // error: returning local by ref
+  }
+
+  writeln(f()[1]);
+
+This example should be a compilation error. Since returning with `ref`
+intent has no impact on the lifetime of the returned variable,
+`localArray` should continue to be destroyed when `f` exits, so that any
+use of the data in the returned value would be a use-after-free.
+
+The current behavior is to allow this program and to treat it the same
+is if the `ref` return intent were not used on `f`.
+
+Returning a Local or Global Array Based Upon Input
+**************************************************
+
+.. code-block:: chapel
+
+  var A:[1..3] int;
+
+  proc f(x:bool) {
+    if x then return A;
+    else {
+      var tmp:[1..0] int;
+      return tmp;
     }
-    var r = test();
-    // now does r.ptr refer to freed memory?
+  }
+  proc g(x) {
+    x[1] = 1;
+  }
+  g(f(true));
+  writeln(A);
 
-  The record author could prevent `r` from referring to freed memory in
-  this case by providing the following `postmove` method:
+It produces `1 0 0` in the current implementation, but would produce `0 0 0`
+under the proposal, because returning `A` from within `f` would make a copy.
+The :ref:`automatic-ref-return` strategy cannot remove this copy since `f`
+sometimes returns a local array (and it would not be legal to return the local
+array by ref). (It might be reasonable to make such functions result in
+a compilation error.)
 
-  .. code-block:: chapel
+Returning a Slice of a Local Array
+**********************************
 
-    proc R.postmove() {
-      if (this.isalias) {
-        this.postblit(); // make a new ptr as a copy of old ptr
-      }
-    }
+.. code-block:: chapel
 
-  With this method, in the process of returning `r` from `test`, the
-  `postmove` method will be called on `r`. Since it creates a new copy of
-  the `ptr` object, the original `alias.ptr` can safely be destroyed at the
-  end of the `test` function.
+  proc f() {
+    var A:[1..4] int;
+    return A[2..3];
+  }
+
+  var A_slice = f();
+  writeln(A_slice);
+
+This is the example discussed in  :ref:`record-copies-strawman-return-slice`.
+
+The proposed strategy will have the slice construction function set
+`isalias` to `true`, and then the `move` initialization made in the
+process of returning in `f` will create a copy of the array slice. When
+`f` completes, `A` and its elements will be freed.  Then, the copy of the
+slide `move initialize` `A_slice`.
+
+The current behavior adjusts reference counts when creating the slice and
+uses an `initCopy` call to initialize `A_slice`.
+
+Returning a Slice of a Global Array
+***********************************
+
+.. code-block:: chapel
+
+  var A:[1..4] int;
+
+  proc f() {
+    return A[2..3];
+  }
+
+  proc g(x) {
+    x[2] = 1;
+  }
+
+  g(f());
+  writeln(A);
+
+Currently (in v1.13) outputs `0 1 0 0`. Under the proposal, it would
+output `0 0 0 0` because the `return` from `f` causes a `move
+initialization` in which `isalias` is true, resulting in a copy of the
+elements.
+
+This proposal does not include a user-facing way to manually restore the
+old behavior. Note though that the slice function uses a pragma that
+could possibly be generalized into a user-facing feature.
+
+Initializing a Variable with a Slice
+************************************
+
+.. code-block:: chapel
+
+  var A:[1..4] int;
+  var A_slice = A[2..3];
+  A_slice[2] = 1;
+  writeln(A);
+
+Currently outputs `0 0 0 0`. Will still do that because `move` for array
+slice from variable initialization will detect `isalias` and perform a
+full copy.
+
+Initializing a Variable to Refer to a Slice
+*******************************************
+
+.. code-block:: chapel
+
+  var A:[1..4] int;
+  var A_slice => A[2..3];
+  A_slice[2] = 1;
+  writeln(A);
+
+Currently outputs `0 1 0 0`. It can still do that if `=>` is not
+considered normal variable initialization, but more like `ref`
+initialization.
+
+Returning a Slice from a Function By Ref
+****************************************
+
+.. code-block:: chapel
+
+  var A:[1..4] int;
+  var A_slice => A[2..3];
+  proc f() ref {
+    return A_slice;
+  }
+
+  f() = 1;
+  writeln(A);
+
+Currently outputs `0 1 1 0`. It will continue to do so under this proposal,
+since `copy` and `move` for `_array` are not called when returning by ref.
+
+It should be possible to create a `ref` to the temporary `_array` record
+returned by a function. Therefore, this example could also be written:
+
+.. code-block:: chapel
+
+  var A:[1..4] int;
+  ref A_slice = A[2..3];
+  proc f() ref {
+    return A_slice;
+  }
+
+  f() = 1;
+  writeln(A);
 
 
-  Open Issues / TODO
-  ++++++++++++++++++
+Returning a Slice with ref Intent
+*********************************
 
-  See :ref:`record-copies-postblit-tbd`.
+.. code-block:: chapel
+
+  proc f() ref {
+    var A:[1..4] int;
+    return A[2..3];
+  }
+
+  writeln(f());
+
+Currently (v1.13) outputs `0 0`. It should be a compile error under the
+proposal, since it returns a local (temporary) variable by `ref`.
+
+
 
