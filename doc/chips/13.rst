@@ -49,11 +49,13 @@ Existing Approach
 +++++++++++++++++
 
 The existing approach to manage array memory is to implement arrays in
-terms of records. These record implementing arrays is called `_array` and
-it consists mainly of a pointer to a class instance. Thus this strategy
-might be called a `record-wrapped class`. These records receive some
-special treatment within the compiler. The implementation works with
-autoCopy, initCopy, and autoDestroy. 
+terms of records and classes. These record implementing arrays is called
+`_array` and it consists mainly of a pointer to a class instance. Thus
+this strategy might be called a `record-wrapped class`. The `_array`
+record receives some special treatment within the compiler. The
+implementation works with autoCopy, initCopy, and autoDestroy. While
+these three functions apply to user records as well, at the moment we are
+interested in when they are added for `_array`.
 
  * autoCopy is called when returning a global array or when passing an array to
    a task function
@@ -67,8 +69,7 @@ the old array and sets the reference count for the new array elements to 1.
 autoDestroy decrements the reference count for the array elements and frees
 the array elements if it reaches 0.
 
-While autoCopy and initCopy make some sense as a way to implement array
-reference counting, the current implementation has some drawbacks:
+The current implementation of array memory management has some drawbacks:
 
  * it leaks memory for distributed arrays
  * reference counting is no longer semantically necessary
@@ -123,14 +124,24 @@ reference. The following example shows the issue.
 
   writeln("globalArray is ", globalArray);
   writeln("setting returnArray()[1] to 2");
-  returnArray()[1] = 2;
+
+  returnArray() = otherArray;
+  // or, equvalently returnArray()[1] = 2;
+  // both of these statements end up modifying globalArray
+
   writeln("globalArray is now ", globalArray);
 
   writeln(globalArray);
 
   writeln("globalRecord is ", globalRecord);
   writeln("setting returnRecord().element to 3");
+
+  //returnRecord() = otherRecord; // compile error: illegal lvalue in assignment
+
+  // here is a similar statement that currently compiles
+  // and which does not modify globalRecord.
   returnRecord().element = 2;
+
   writeln("globalRecord is now ", globalRecord);
 
 The above program has output
@@ -145,23 +156,27 @@ The above program has output
   setting returnRecord().element to 3
   globalRecord is now (element = 0)
 
-This behaviour might be in conflict with the current language
-specification. In spec version 0.981, section 13.7 says "By default, or
-if the return-intent is const, the function returns a value that cannot
-be used as an lvalue". From that section, we would expect a compilation
-error for this example - for both the array and record cases.  However,
-section 20.2 says "Chapel semantics are defined so that the compiler will
-never need to insert temporary arrays of the same size as a user array
-variable." This implies that returnArray() cannot make a copy of the
-globalArray - since such a copy would need to be in a temporary since
-there is no user variable in which to place that copy.
+This output indicates that modifying the array returned from `returnArray`
+causes a modification to `globalArray` - in other words, the array elements
+are returned by reference. In contrast, modifying the value returned by
+`returnRecord` does not result in a modification to `globalRecord`.  The record
+is returned by value.
 
-In any case, the output of this program is instructive in showing how the
-current implementation behaves. We can see from the output that modifying the
-array returned from `returnArray` caused a modification to `globalArray` - in
-other words, the array returned by reference. In contrast, modifying the value
-returned by `returnRecord` did not result in a modification to `globalRecord`.
-The record returned by value. 
+The current language specification indicates that `returnArray` and
+`returnRecord` should return by value. Spec version 0.981, section 13.7
+says "By default, or if the return-intent is const, the function returns
+a value that cannot be used as an lvalue". That statement indicates that
+the statement `returnArray() = otherArray` should be an error just as
+`returnRecord() = otherRecord` is. It is less clear what it means for the
+versions setting an element, such as returnArray()[1] = 2.
+
+Thus, the current behavior does not match the specification.
+
+.. commented-out
+
+  Section 20.2 says "Chapel semantics are defined so that the compiler
+  will never need to insert temporary arrays of the same size as a user
+  array variable."
 
 Note though that in Chapel, both arrays and records are `value types` in that
 when you initialize one variable with another, the elements are copied. E.g.
