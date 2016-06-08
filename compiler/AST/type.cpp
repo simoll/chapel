@@ -1970,6 +1970,9 @@ bool isArrayClass(Type* type) {
 bool isString(Type* type) {
   bool retval = false;
 
+  // Pretty sure this needs to return true if isStringType
+  // would return true
+
   if (AggregateType* aggr = toAggregateType(type))
     retval = strcmp(aggr->symbol->name, "string") == 0;
 

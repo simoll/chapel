@@ -1993,6 +1993,8 @@ buildClassDefExpr(const char* name,
   // possible in the compiler. gatherWellKnownTypes runs too late to be of use
   // to us.
   if (strcmp("string", name) == 0) {
+    // If we want to change dtString to refer to string(ascii),
+    // this might be the place to do it.
     *dtString = *ct;
     // These fields get overwritten with `ct` by the assignment. These fields are
     // set to `this` by the AggregateType constructor so they should still be

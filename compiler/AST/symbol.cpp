@@ -561,6 +561,9 @@ GenRet VarSymbol::codegen() {
   if( outfile ) {
     // dtString immediates don't actually codegen as immediates, we just use
     // them for param string functionality.
+
+    // Consider changing this isStringType to support
+    // utf-8 and ascii string literals
     if (immediate && ret.chplType != dtString) {
       ret.isLVPtr = GEN_VAL;
       if (immediate->const_kind == CONST_KIND_STRING) {
@@ -3160,6 +3163,9 @@ VarSymbol *new_StringSymbol(const char *str) {
       gFalse);                    // owned = false
   ctor->insertAtTail(gFalse);     // needToCopy = false
 
+  // Either:
+    // change dtString to be concrete, or
+    // make this new VarSymbol have a concrete string(ascii) type
   s = new VarSymbol(astr("_str_literal_", istr(literal_id++)), dtString);
   s->addFlag(FLAG_NO_AUTO_DESTROY);
   s->addFlag(FLAG_CONST);
@@ -3386,6 +3392,8 @@ static Type*
 immediate_type(Immediate *imm) {
   switch (imm->const_kind) {
     case CONST_KIND_STRING: {
+      // We might need to have string_kind for UTF-8 and ASCII strings.
+      // (would need to change ifa/num.h and ifa/num.cpp)
       if (imm->string_kind == STRING_KIND_STRING) {
         return dtString;
       } else if (imm->string_kind == STRING_KIND_C_STRING) {

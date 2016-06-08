@@ -1249,6 +1249,12 @@ module String {
 
   } // end record string
 
+  // Part of one approach ?
+  // proc chpl_get_string_ascii_enum() {
+  //   return Encoding.ascii;
+  // }
+  // type string_ascii = string(Encoding.ascii);
+  // type string_utf8 = string(Encoding.utf8);
 
   // We'd like this to be by ref, but doing so leads to an internal
   // compiler error.  See

@@ -877,6 +877,7 @@ static void findHeapVarsAndRefs(Map<Symbol*,Vec<SymExpr*>*>& defMap,
             !isSyncType(def->sym->type) &&
             // Dont try to broadcast string literals, they'll get fixed in
             // another manner
+            // Should call isStringType
             (def->sym->type != dtString)))) {
         // replicate global const of primitive type
         INT_ASSERT(defMap.get(def->sym) && defMap.get(def->sym)->n == 1);

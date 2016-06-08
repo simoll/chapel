@@ -57,6 +57,8 @@ static WellKnownType sWellKnownTypes[] = {
   {"BaseDom",            &dtBaseDom,       true},
   {"BaseDist",           &dtDist,          true},
   {"chpl_main_argument", &dtMainArgument, false}
+  // Can dtStringAscii be added here to
+  // refer to a type asciiString = string(ascii) ?
 };
 
 

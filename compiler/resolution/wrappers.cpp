@@ -668,6 +668,7 @@ void coerceActuals(FnSymbol* fn, CallInfo* info) {
       c2 = false;
       Type* actualType = actualSym->type;
       if (needToAddCoercion(actualType, actualSym, formalType, fn)) {
+        // actualType == dtString -> isStringType(actualType)
         if (formalType == dtStringC && actualType == dtString && actualSym->isImmediate()) {
           // We do this swap since we know the string is a valid literal
           // There also is no cast defined for string->c_string on purpose (you

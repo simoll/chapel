@@ -66,6 +66,8 @@ static bool isTrivialAssignment(FnSymbol* fn)
   // Skip this optimization for string/wide string types
   // (due to problems providing additional arguments for
   //  PRIM_ASSIGN).
+
+  // This needs to call isStringType or check for either UTF-8/ascii string
   if (argType == dtString)
     return false;
 

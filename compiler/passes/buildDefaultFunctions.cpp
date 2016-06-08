@@ -754,6 +754,7 @@ static void build_enum_cast_function(EnumType* et) {
   fn->addFlag(FLAG_COMPILER_GENERATED);
   arg1 = new ArgSymbol(INTENT_BLANK, "t", dtAny);
   arg1->addFlag(FLAG_TYPE_VARIABLE);
+  // This argument should be a generic string type
   arg2 = new ArgSymbol(INTENT_BLANK, "_arg2", dtString);
   fn->insertFormalAtTail(arg1);
   fn->insertFormalAtTail(arg2);
@@ -1300,6 +1301,7 @@ static void buildDefaultReadWriteFunctions(AggregateType* ct) {
 
 
 static void buildStringCastFunction(EnumType* et) {
+  // Think this one should be the generic string
   if (function_exists("_cast", 2, dtString, et))
     return;
 
@@ -1311,6 +1313,8 @@ static void buildStringCastFunction(EnumType* et) {
   ArgSymbol* arg = new ArgSymbol(INTENT_BLANK, "this", et);
   arg->addFlag(FLAG_ARG_THIS);
   fn->insertFormalAtTail(arg);
+  // This one needs to turn into : string
+  // with the generic string type
   fn->where = new BlockStmt(new CallExpr("==", t, dtString->symbol));
 
   for_enums(constant, et) {

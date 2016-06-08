@@ -276,6 +276,7 @@ static void checkExternProcs() {
       continue;
 
     for_formals(formal, fn) {
+      // This should call isStringType
       if (formal->typeInfo() == dtString) {
         if (fn->instantiatedFrom == NULL) {
           USR_FATAL_CONT(fn, "extern procedures should not take arguments of "

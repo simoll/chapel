@@ -1027,6 +1027,7 @@ resolveFormals(FnSymbol* fn) {
         continue;
 
       // Don't pass dtString params in by reference
+      // Should call isStringType
       if(formal->type == dtString && formal->hasFlag(FLAG_INSTANTIATED_PARAM))
         continue;
 
@@ -1242,6 +1243,7 @@ canInstantiate(Type* actualType, Type* formalType) {
       (is_int_type(actualType) || is_uint_type(actualType) || is_imag_type(actualType) ||
        is_real_type(actualType) || is_complex_type(actualType)))
     return true;
+  // use isStringType, including possibly a generic string
   if (formalType == dtString && actualType==dtStringC)
     return true;
   if (formalType == dtStringC && actualType==dtStringCopy)
@@ -1325,6 +1327,8 @@ static bool canParamCoerce(Type* actualType, Symbol* actualSym, Type* formalType
         if (fits_in_uint(get_width(formalType), var->immediate))
           return true;
   }
+
+  // isStringType(actualType)
   if (formalType == dtStringC && actualType == dtString)
     if (actualSym && actualSym->isImmediate())
       return true;
@@ -1370,6 +1374,8 @@ canCoerce(Type* actualType, Symbol* actualSym, Type* formalType, FnSymbol* fn, b
   }
   if (actualType->symbol->hasFlag(FLAG_REF))
     return canDispatch(actualType->getValType(), NULL, formalType, fn, promotes);
+
+  // isStringType(formalType)
   if (formalType == dtString && actualType == dtStringCopy)
     return true;
   if (formalType == dtStringC && actualType == dtStringCopy)
@@ -1599,7 +1605,9 @@ computeGenericSubs(SymbolMap &subs,
           //   foo("bar");
           // and pass "bar" as a c_string instead of a string
           if (fn->hasFlag(FLAG_EXTERN) && (formal->type == dtAny) &&
+              // (type == dtString) -> isStringType(type)
               (!formal->hasFlag(FLAG_PARAM)) && (type == dtString) &&
+              //  isStringType(alignedA...)
               (alignedActuals.v[i]->type == dtString) &&
               (alignedActuals.v[i]->isImmediate())) {
             subs.put(formal, dtStringC->symbol);
@@ -2214,6 +2222,8 @@ static bool paramWorks(Symbol* actual, Type* formalType) {
       return fits_in_uint(get_width(formalType), imm);
     }
     if (imm->const_kind == CONST_KIND_STRING) {
+      // isStringType for now, but maybe put a comment
+      // that it it wouldn't work for UTF-16 e.g.
       if (formalType == dtStringC && actual->type == dtString) {
         return true;
       }
@@ -5658,6 +5668,10 @@ preFold(Expr* expr) {
                      is_bool_type(oldType)) &&
                     (is_int_type(newType) || is_uint_type(newType) ||
                      is_bool_type(newType) || is_enum_type(newType) ||
+                     // newType can be string(ascii) or string(utf8)
+                     // couldn't be called with generic
+                     // isStringType and maybe a comment about
+                     // UTF-16 being disqualified
                      newType == dtString || newType == dtStringC)) {
                   VarSymbol* typevar = toVarSymbol(newType->defaultValue);
                   EnumType* typeenum = toEnumType(newType);
@@ -5669,9 +5683,12 @@ preFold(Expr* expr) {
                     coerce_immediate(var->immediate, &coerce);
                     result = new SymExpr(new_ImmediateSymbol(&coerce));
                     call->replace(result);
+                  // isStringType
                   } else if (newType == dtString) {
                     // typevar will be null for dtString so we need a special
                     // case.
+                    
+                    // newType -> STRING_KIND_STRING_UTF8/ASCII
                     Immediate coerce = Immediate("", STRING_KIND_STRING);
                     coerce_immediate(var->immediate, &coerce);
                     result = new SymExpr(new_StringSymbol(coerce.v_string));
@@ -5699,6 +5716,7 @@ preFold(Expr* expr) {
                   } else {
                     INT_FATAL("unexpected case in cast_fold");
                   }
+                // isStringType but not UTF-16
                 } else if (oldType == dtString && newType == dtStringC) {
                   result = new SymExpr(new_CStringSymbol(var->immediate->v_string));
                   call->replace(result);
@@ -5708,6 +5726,7 @@ preFold(Expr* expr) {
           } else if (EnumSymbol* enumSym = toEnumSymbol(sym->var)) {
             if (SymExpr* sym = toSymExpr(call->get(1))) {
               Type* newType = sym->var->type;
+              // isStringType
               if (newType == dtString) {
                 result = new SymExpr(new_StringSymbol(enumSym->name));
                 call->replace(result);
@@ -6583,6 +6602,8 @@ postFold(Expr* expr) {
       if (lhs->var->isParameter() && rhs->var->isParameter()) {
         const char* lstr = get_string(lhs);
         const char* rstr = get_string(rhs);
+        // isStringType
+        // alternatively, could be !(dtStringC || dtStringCopy)
         if (lhs->var->type == dtString)
           result = new SymExpr(new_StringSymbol(astr(lstr, rstr)));
         else
@@ -6935,6 +6956,8 @@ resolveExpr(Expr* expr) {
         // Don't try to resolve the defaultTypeConstructor for string literals
         // (resolution ordering issue, string literals are encountered too early
         // on and we don't know enough to be able to resolve them at that point)
+
+        // isStringType, but won't be generic
         if (!(ct == dtString && (sym->var->isParameter() ||
                                  sym->var->hasFlag(FLAG_INSTANTIATED_PARAM))) &&
             !ct->symbol->hasFlag(FLAG_GENERIC) &&
@@ -7822,6 +7845,37 @@ resolve() {
   unmarkDefaultedGenerics();
 
   resolveExternVarSymbols();
+
+  // At least by here
+  // resolve string(ascii) and string(utf8) types
+  // set dtStringAscii and dtStringUTF8 to them
+
+
+  // 2 approaches:
+  // 1) resolve string(ascii) and string(utf8)
+  //    by creating calls to their type constructor
+
+  /* 
+      // ? is the type constructor really called string, or something else?
+     
+      CallExpr* asciiEnum = new CallExpr("chpl_get_string_ascii_enum");
+
+
+      CallExpr* call = new CallExpr(dtString->defaultTypeConstructor
+                                    asciiEnum);
+
+      // insert it in the AST somewhere...
+      // Try putting it into the String module's init function?
+      resolveCallAndCallee(call);
+   */
+
+  // 2) in String.chpl, make declarations like
+  //     type asciiString = string(ascii);
+  //     type utf8String = string(utf8);
+
+  // at this point, you'd have say
+  //   make new SymExpr( "string_ascii" )
+  //   dtStringAscii = resolveTypeAlias(se)
 
   // --ipe does not build a mainModule
   if (mainModule)

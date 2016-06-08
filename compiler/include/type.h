@@ -244,7 +244,12 @@ TYPE_EXTERN PrimitiveType* dtSyncVarAuxFields;
 TYPE_EXTERN PrimitiveType* dtSingleVarAuxFields;
 
 // Well-known types
-TYPE_EXTERN AggregateType* dtString;
+TYPE_EXTERN AggregateType* dtString; // consider renaming this dtStringGeneric
+
+// Add:
+// dtStringAscii
+// dtStringUTF8
+
 TYPE_EXTERN AggregateType* dtArray;
 TYPE_EXTERN AggregateType* dtBaseArr;
 TYPE_EXTERN AggregateType* dtBaseDom;
@@ -296,12 +301,16 @@ bool isDistImplType(Type* t);
 bool isSyncType(Type* t);
 bool isAtomicType(Type* t);
 bool isRefIterType(Type* t);
+// isStringType
+// returns true for generic version, string(ascii), string(utf-8)
+// ie all instantiations of the generic version
 
 bool isSubClass(Type* type, Type* baseType);
 bool isDistClass(Type* type);
 bool isDomainClass(Type* type);
 bool isArrayClass(Type* type);
 
+// ? is same as isStringType?
 bool isString(Type* type);
 bool isUserDefinedRecord(Type* type);
 
