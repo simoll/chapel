@@ -92,7 +92,8 @@ module DefaultAssociative {
     //
     proc dsiBuildArray(type eltType) {
       return new DefaultAssociativeArr(eltType=eltType, idxType=idxType,
-                                       parSafeDom=parSafe, dom=this);
+                                       parSafeDom=parSafe, dom=this,
+                                       dataDom=this.tableDom);
     }
   
     proc dsiSerialReadWrite(f /*: Reader or Writer*/) {
@@ -110,6 +111,13 @@ module DefaultAssociative {
     proc dsiSerialWrite(f) { this.dsiSerialReadWrite(f); }
     proc dsiSerialRead(f) { this.dsiSerialReadWrite(f); }
   
+    proc dsiLockDomain() {
+      lockTable();
+    }
+    proc dsiUnlockDomain() {
+      unlockTable();
+    }
+
     //
     // Standard user domain interface
     //
@@ -118,22 +126,20 @@ module DefaultAssociative {
       return numEntries.read();
     }
   
-    iter dsiIndsIterSafeForRemoving() {
-      postponeResize = true;
-      for i in this.these() do
-        yield i;
-      on this {
-        postponeResize = false;
-        if (numEntries.read()*8 < tableSize && tableSizeNum > 1) {
-          if parSafe then lockTable();
-          if (numEntries.read()*8 < tableSize && tableSizeNum > 1) {
-            _resize(grow=false);
-          }
-          if parSafe then unlockTable();
-        }
+    proc dsiSetIndicesFromDomain(d: domain) {
+      if (d._value.type == this.type) {
+        numEntries.write(d._value.numEntries.read());
+        tableSizeNum = d._value.tableSizeNum;
+        tableDom = d._value.tableDom;
+        table = d._value.table;
       }
+
+      // TODO -- otherwise use a forall? add indices?
+      // TODO - Brad thinks it'd be reasonable to try
+      // to move from getIndices/setIndices
+      // to this even for regular domain
     }
-  
+
     iter these() {
       if !isEnumType(idxType) {
         for slot in _fullSlots() {
@@ -369,7 +375,7 @@ module DefaultAssociative {
           tableSize=prime;
           tableDom = {0..tableSize-1};
 
-          //numEntries will be reconstructed as keys are readded
+          //numEntries will be reconstructed as keys are re-added
           numEntries.write(0);
 
           // insert old data into newly resized table
@@ -505,7 +511,8 @@ module DefaultAssociative {
     param parSafeDom: bool;
     var dom : DefaultAssociativeDom(idxType, parSafe=parSafeDom);
   
-    var data : [dom.tableDom] eltType;
+    var dataDom = {0..(-1:chpl_table_index_type)};
+    var data : [dataDom] eltType;
   
     var tmpDom = {0..(-1:chpl_table_index_type)};
     var tmpTable: [tmpDom] eltType;
@@ -638,7 +645,51 @@ module DefaultAssociative {
     proc dsiSerialWrite(f) { this.dsiSerialReadWrite(f); }
     proc dsiSerialRead(f) { this.dsiSerialReadWrite(f); }
   
-  
+    proc dsiReallocate(d: domain) {
+      if (d._value.type == dom.type) {
+
+        if d._value.dsiNumIndices == 0 || this.dom.dsiNumIndices == 0 {
+          // No need to worry about preserving array elements
+          // in this common case, since intersection with empty
+          // set is the empty set.
+
+          dataDom = d._value.tableDom;
+
+        } else {
+          // create a temporary array that will store
+          // elements in the intersection of this.dom and d
+          // but will do so using d's slots so that we
+          // can just copy (swap) it back into data later.
+          tmpDom = d._value.tableDom;
+
+          // compute the intersection and store the shared elements
+          ref table = d._value.table;
+          for slot in d._value._fullSlots(table) {
+            var (found, otherslot) = this.dom._findFilledSlot(table[slot].idx,
+                                                              haveLock=true);
+            if found {
+              // preserve this element
+              tmpTable[slot] = data[otherslot];
+            }
+          }
+
+          // now swap it in to replace the old array
+          // TODO use <=> later
+          dataDom = tmpDom;
+          data = tmpTable;
+
+          // Clear any space used by tmpTable
+          tmpDom = {0..(-1:chpl_table_index_type)};
+
+          // At this point, dataDom temporarily does not match
+          // this.dom.tableDom.
+
+          // After dsiSetIndicesFromDomain, they will again match.
+          // dsiSetIndicesFromDomain is called by the caller
+        }
+      }
+    }
+
     //
     // Associative array interface
     //

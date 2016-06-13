@@ -1,0 +1,31 @@
+Making domain
+Result
+1
+2
+3
+5
+7
+Making array
+Setting element 2
+Result
+1 : 0
+2 : 2
+3 : 0
+5 : 0
+7 : 0
+Reassigning Domain
+Result
+2
+4
+Array Result
+2 : 2
+4 : 0
+Copying Domain
+Result
+2
+4
+Creating empty domain
+Replacing empty domain
+1 : 0
+2 : 0
+Assigning back to empty domain

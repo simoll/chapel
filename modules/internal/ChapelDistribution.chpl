@@ -173,6 +173,8 @@ module ChapelDistribution {
     }
   
     // used for associative domains/arrays
+    // TODO -- why do these need to be in BaseDom
+    // at all? They are only used in DefaultAssociative...
     proc _backupArrays() {
       for arr in _arrs do
         arr._backupArray();
@@ -213,6 +215,12 @@ module ChapelDistribution {
     proc dsiLinksDistribution() return true;
   
     proc dsiDisplayRepresentation() { }
+
+    // lock this domain, in case it is protected
+    // against parallel access. Parallel updates to
+    // a domain and its arrays aren't supported for all types.
+    proc dsiLockDomain() { }
+    proc dsiUnlockDomain() { }
   }
   
   class BaseRectangularDom : BaseDom {
@@ -345,6 +353,7 @@ module ChapelDistribution {
     }
   
     // methods for associative arrays
+    // TODO - why must these be in BaseArr ?
     proc clearEntry(idx, haveLock:bool = false) {
       halt("clearEntry() not supported for non-associative arrays");
     }
