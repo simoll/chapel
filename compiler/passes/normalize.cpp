@@ -543,41 +543,17 @@ static bool is_void_return(CallExpr* call) {
 static void insertRetMove(FnSymbol* fn, VarSymbol* retval, CallExpr* ret) {
   Expr* ret_expr = ret->get(1);
   ret_expr->remove();
-  if (fn->returnsRefOrConstRef())
-    ret->insertBefore(new CallExpr(PRIM_MOVE, retval, new CallExpr(PRIM_ADDR_OF, ret_expr)));
-  else if (fn->retExprType)
+  if (fn->retExprType && !fn->returnsRefOrConstRef())
   {
     // This is the case for a declared return type.
     ret->insertBefore(new CallExpr(PRIM_MOVE, retval,
                       new CallExpr(PRIM_COERCE, ret_expr,
                         fn->retExprType->body.tail->copy())));
+  } else {
+    // Otherwise, use PRIM_COERCE to adjust reference level
+    ret->insertBefore(new CallExpr(PRIM_MOVE, retval, new CallExpr(PRIM_COERCE, ret_expr)));
   }
-  else if (!fn->hasFlag(FLAG_WRAPPER) && strcmp(fn->name, "iteratorIndex") &&
-           strcmp(fn->name, "iteratorIndexHelp"))
-    ret->insertBefore(new CallExpr(PRIM_MOVE, retval, new CallExpr(PRIM_DEREF, ret_expr)));
-  else
-    ret->insertBefore(new CallExpr(PRIM_MOVE, retval, ret_expr));
 }
-
-
-// Look in the block statement determining a return value type, and see if it
-// looks like an array type expression.
-static bool
-returnTypeIsArray(BlockStmt* retExprType)
-{
-  CallExpr* call = toCallExpr(retExprType->body.tail);
-  if (! call)
-    return false;
-  UnresolvedSymExpr* urse = toUnresolvedSymExpr(call->baseExpr);
-  if (! urse)
-    return false;
-  if (strcmp(urse->unresolved, "chpl__buildArrayRuntimeType"))
-    // Does not match.
-    return false;
-  // Very likely an array type.
-  return true;
-}
-
 
 // Following normalization, each function contains only one return statement
 // preceded by a label.  The first half of the function counts the
@@ -680,23 +656,6 @@ static void normalize_returns(FnSymbol* fn) {
                              "expressions the iterator yields");
 
       fn->addFlag(FLAG_SPECIFIED_RETURN_TYPE);
-
-      // I recommend a rework of function representation in the AST.
-      // Because we strip type information off of variable declarations and
-      // use the type of the initializer instead, initialization is obligatory.
-      // I think we should heed the declared type.
-      // Then at least these two lines can go away, and other simplifications
-      // may follow.
-
-      // We do not need to do this for iterators returning arrays
-      // because it adds initialization code that is later removed.
-      // Also, we want arrays returned from iterators to behave like
-      // references, so we add the 'var' return intent here.
-      if (fn->isIterator() &&
-          returnTypeIsArray(retExprType))
-        // Treat iterators returning arrays as if they are always returned
-        // by ref.
-        fn->retTag = RET_REF;
     }
 
     fn->insertAtHead(new DefExpr(retval));

@@ -303,7 +303,11 @@ returnInfoVirtualMethodCall(CallExpr* call) {
 }
 
 static Type*
-returnInfoSecondType(CallExpr* call) {
+returnInfoCoerce(CallExpr* call) {
+  // 1 actual is used to adjust ref level
+  if (call->numActuals() == 1)
+    return call->get(1)->typeInfo();
+
   Type* t = call->get(2)->typeInfo();
   return t;
 }
@@ -633,7 +637,10 @@ initPrimitive() {
   // the declared return type is not really known until function
   // resolution.
   // It coerces its first argument to the type stored in the second argument.
-  prim_def(PRIM_COERCE, "coerce", returnInfoSecondType);
+  // If there is no second argument, it simply adjusts the reference
+  // level appropriately for returning (based on the function
+  // and the return intent).
+  prim_def(PRIM_COERCE, "coerce", returnInfoCoerce);
 
   prim_def(PRIM_CALL_RESOLVES, "call resolves", returnInfoBool);
   prim_def(PRIM_METHOD_CALL_RESOLVES, "method call resolves", returnInfoBool);

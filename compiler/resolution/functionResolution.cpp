@@ -348,11 +348,6 @@ FnSymbol* requiresImplicitDestroy(CallExpr* call);
 static Expr* postFold(Expr* expr);
 static Expr* resolveExpr(Expr* expr);
 static void
-computeReturnTypeParamVectors(BaseAST* ast,
-                              Symbol* retSymbol,
-                              Vec<Type*>& retTypes,
-                              Vec<Symbol*>& retParams);
-static void
 insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts);
 static bool
 possible_signature_match(FnSymbol* fn, FnSymbol* gn);
@@ -954,9 +949,17 @@ resolveSpecifiedReturnType(FnSymbol* fn) {
   fn->retType = retType;
 
   if (retType != dtUnknown) {
+
+    // For iterators, return arrays/domains by reference
+    if (fn->isIterator() &&
+        isRecordWrappedType(retType) &&
+        fn->retTag == RET_VALUE) {
+      fn->retTag = RET_REF;
+    }
+
     if (fn->returnsRefOrConstRef()) {
       makeRefType(retType);
-      retType = fn->retType->refType;
+      retType = retType->refType;
       fn->retType = retType;
     }
     fn->retExprType->remove();
@@ -4568,41 +4571,6 @@ static void resolveMove(CallExpr* call) {
                                     isChplHereAlloc ? lhs->type->symbol :
                                     lhsBaseType->symbol, tmp));
   }
-
-  // Fix up PRIM_COERCE : remove it if it has a param RHS.
-  CallExpr* rhsCall = toCallExpr(rhs);
-
-  if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
-    SymExpr* toCoerceSE = toSymExpr(rhsCall->get(1));
-    if (toCoerceSE) {
-      Symbol* toCoerceSym = toCoerceSE->var;
-      bool promotes = false;
-      // This transformation is normally handled in insertCasts
-      // but we need to do it earlier for parameters. We can't just
-      // call insertCasts here since that would dramatically change the
-      // resolution order (and would be apparently harder to get working).
-      if (toCoerceSym->isParameter() ||
-          toCoerceSym->hasFlag(FLAG_TYPE_VARIABLE) ) {
-        // Can we coerce from the argument to the function return type?
-        // Note that rhsType here is the function return type (since
-        // that is what the primitive returns as its type).
-        if (toCoerceSym->type == rhsType ||
-            canParamCoerce(toCoerceSym->type, toCoerceSym, rhsType)) {
-          // Replacing the arguments to the move works, but for
-          // some reason replacing the whole move doesn't.
-          call->get(1)->replace(new SymExpr(lhs));
-          call->get(2)->replace(new SymExpr(toCoerceSym));
-        } else if (canCoerce(toCoerceSym->type, toCoerceSym, rhsType,
-                             NULL, &promotes)) {
-          // any case that doesn't param coerce but does coerce will
-          // be handled in insertCasts later.
-        } else {
-          USR_FATAL(userCall(call), "type mismatch in return from %s to %s",
-                    toString(toCoerceSym->type), toString(rhsType));
-        }
-      }
-    }
-  }
 }
 
 
@@ -5835,6 +5803,61 @@ static Expr* resolvePrimInit(CallExpr* call)
 
 
 static Expr*
+preFoldCoerce(CallExpr* call) {
+
+  FnSymbol* fn = toFnSymbol(call->parentSymbol);
+
+  //resolveDefaultGenericType(call);
+  INT_ASSERT(call->isPrimitive(PRIM_COERCE));
+
+  // If the argument to coerce is param/type, we need to
+  // remove the PRIM_COERCE.
+  Symbol* fromParamSym = NULL;
+  Expr* fromParamExpr = NULL;
+
+  if (fn->retTag == RET_TYPE ||
+      fn->retTag == RET_PARAM)
+    fromParamExpr = call->get(1);
+
+  if (SymExpr* se = toSymExpr(call->get(1))) {
+    Symbol* sym = se->var;
+    if (sym->isParameter() ||
+        sym->hasFlag(FLAG_TYPE_VARIABLE) ) {
+      fromParamExpr = se;
+      fromParamSym = sym;
+    }
+  }
+
+  if (fromParamExpr) {
+    Type* fromType = fromParamExpr->typeInfo();
+    Type* toType = call->typeInfo();
+    bool promotes = false;
+    // This transformation is normally handled in insertCasts
+    // but we need to do it earlier for parameters. We can't just
+    // call insertCasts here since that would dramatically change the
+    // resolution order (and would be apparently harder to get working).
+
+    // Can we coerce from the argument to the function return type?
+    // Note that rhsType here is the function return type (since
+    // that is what the primitive returns as its type).
+    if (fromType == toType || canParamCoerce(fromType, fromParamSym, toType)) {
+      // Replace the whole PRIM_COERCE with new SymExpr(fromSym)
+      Expr* result = call->get(1)->remove();
+      call->replace(result);
+      return result;
+    } else if (canCoerce(fromType, fromParamSym, toType, NULL, &promotes)) {
+      // any case that doesn't param coerce but does coerce will
+      // be handled in insertCasts later.
+    } else {
+      USR_FATAL(userCall(call), "type mismatch in return from %s to %s",
+                toString(fromType), toString(toType));
+    }
+  }
+
+  return call;
+}
+
+static Expr*
 preFold(Expr* expr) {
   Expr* result = expr;
   if (CallExpr* call = toCallExpr(expr)) {
@@ -6341,6 +6364,8 @@ preFold(Expr* expr) {
         result = call->get(1)->remove();
         call->replace(result);
       }
+    } else if (call->isPrimitive(PRIM_COERCE)) {
+      result = preFoldCoerce(call);
     } else if (call->isPrimitive(PRIM_TYPE_TO_STRING)) {
       SymExpr* se = toSymExpr(call->get(1));
       INT_ASSERT(se && se->var->hasFlag(FLAG_TYPE_VARIABLE));
@@ -7469,27 +7494,21 @@ resolveBlockStmt(BlockStmt* blockStmt) {
   }
 }
 
-
 static void
-computeReturnTypeParamVectors(BaseAST* ast,
-                              Symbol* retSymbol,
-                              Vec<Type*>& retTypes,
-                              Vec<Symbol*>& retParams) {
+computeReturnExprs(BaseAST* ast,
+                   Symbol* retSymbol,
+                   Vec<Expr*>& retExprs) {
   if (CallExpr* call = toCallExpr(ast)) {
     if (call->isPrimitive(PRIM_MOVE)) {
       if (SymExpr* sym = toSymExpr(call->get(1))) {
         if (sym->var == retSymbol) {
-          if (SymExpr* sym = toSymExpr(call->get(2)))
-            retParams.add(sym->var);
-          else
-            retParams.add(NULL);
-          retTypes.add(call->get(2)->typeInfo());
+          retExprs.add(call->get(2));
         }
       }
     }
   }
 
-  AST_CHILDREN_CALL(ast, computeReturnTypeParamVectors, retSymbol, retTypes, retParams);
+  AST_CHILDREN_CALL(ast, computeReturnExprs, retSymbol, retExprs);
 }
 
 static void
@@ -7521,28 +7540,34 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
             // the types are the same, or by using a = call if the types are
             // different. It could use a _cast call if the types are different,
             // but the = call works better in cases where an array is returned.
-
             if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
               // handle move lhs, coerce rhs
-              SymExpr* fromExpr = toSymExpr(rhsCall->get(1));
-              SymExpr* fromTypeExpr = toSymExpr(rhsCall->get(2));
-              Symbol* from = fromExpr->var;
-              Symbol* fromType = fromTypeExpr->var;
+              Expr* from = rhsCall->get(1);
+              SymExpr* fromTypeExpr = NULL;
+              Symbol* fromType = rhsCall->typeInfo()->symbol;
               Symbol* to = lhs->var;
 
-              // Check that lhsType == the result of coercion
-              INT_ASSERT(lhsType == rhsCall->typeInfo());
+              if (rhsCall->numActuals() == 2) {
+                fromTypeExpr = toSymExpr(rhsCall->get(2));
+                fromType = fromTypeExpr->var;
+              }
+
+              bool haveRef = isReferenceType(from->typeInfo());
+              bool needRef = fn->returnsRefOrConstRef() ||
+                             isReferenceType(fn->retType);
 
               if (!typesDiffer) {
                 // types are the same. remove coerce and
                 // handle reference level adjustments. No cast necessary.
 
-                if (rhsType == lhsType)
-                  rhs = new SymExpr(from);
-                else if (rhsType == lhsType->refType)
-                  rhs = new CallExpr(PRIM_DEREF, new SymExpr(from));
-                else if (rhsType->refType == lhsType)
-                  rhs = new CallExpr(PRIM_ADDR_OF, new SymExpr(from));
+                if (needRef == haveRef)
+                  rhs = from->remove();
+                else if (haveRef)
+                  // have a reference but need to return a value
+                  rhs = new CallExpr(PRIM_DEREF, from->remove());
+                else
+                  // have a value but need to return a reference.
+                  rhs = new CallExpr(PRIM_ADDR_OF, from->remove());
 
                 CallExpr* move = new CallExpr(PRIM_MOVE, to, rhs);
                 call->replace(move);
@@ -7561,7 +7586,7 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
 
                 // By resolving =, we will generate an error if from cannot be
                 // coerced into to.
-                CallExpr* assign = new CallExpr("=", to, from);
+                CallExpr* assign = new CallExpr("=", to, from->remove());
                 call->insertBefore(assign);
 
                 // Resolve each of the new CallExprs They need to be resolved
@@ -7638,6 +7663,37 @@ static void instantiate_default_constructor(FnSymbol* fn) {
   }
 }
 
+static bool
+doNotChangeRetToValue(FnSymbol* fn)
+{
+
+  if (fn->hasFlag(FLAG_WRAPPER) ||
+      0 == strcmp(fn->name, "iteratorIndex") ||
+      0 == strcmp(fn->name, "iteratorIndexHelp"))
+    return true;
+
+  return false;
+}
+
+// This is a workaround - currently, iterators
+// can return tuples of references by ref intent.
+static bool returnTupleOfRefAsValueInIterator(FnSymbol* fn, Type* retType)
+{
+  if (fn->isIterator() && retType->symbol->hasFlag(FLAG_TUPLE)) {
+    // Does retType contain any references?
+    bool foundref = false;
+    if (AggregateType* at = toAggregateType(retType)) {
+      for_fields(field, at) {
+        if (isReferenceType(field->type))
+          foundref = true;
+      }
+    }
+    return foundref;
+  } else {
+    return false;
+  }
+}
+
 static void resolveReturnType(FnSymbol* fn)
 {
   // Resolve return type.
@@ -7646,19 +7702,46 @@ static void resolveReturnType(FnSymbol* fn)
 
   if (retType == dtUnknown) {
 
-    Vec<Type*> retTypes;
-    Vec<Symbol*> retParams;
-    computeReturnTypeParamVectors(fn, ret, retTypes, retParams);
+    Vec<Expr*> retExprs;
+    computeReturnExprs(fn, ret, retExprs);
 
-    if (retTypes.n == 1)
+    Vec<Type*> retTypes;
+    Vec<Symbol*> retSyms;
+
+    bool useValue = (fn->retTag == RET_VALUE);
+    if (doNotChangeRetToValue(fn))
+      useValue = false;
+
+    forv_Vec(Expr, expr, retExprs) {
+      Symbol* sym = NULL;
+
+      Type* useType = expr->typeInfo();
+      if (useValue || returnTupleOfRefAsValueInIterator(fn, useType))
+        useType = useType->getValType();
+
+      retTypes.add(useType);
+
+      Expr* insideCoerce = expr;
+      if (CallExpr* call = toCallExpr(expr))
+        if (call->isPrimitive(PRIM_COERCE))
+            insideCoerce = call->get(1);
+
+      if (SymExpr* se = toSymExpr(insideCoerce))
+        sym = se->var;
+
+      retSyms.add(sym);
+    }
+
+    // Now compute the return type.
+    if (retExprs.n == 1)
       retType = retTypes.head();
-    else if (retTypes.n > 1) {
+    else if (retExprs.n > 1) {
       for (int i = 0; i < retTypes.n; i++) {
         bool best = true;
         for (int j = 0; j < retTypes.n; j++) {
           if (retTypes.v[i] != retTypes.v[j]) {
             bool requireScalarPromotion = false;
-            if (!canDispatch(retTypes.v[j], retParams.v[j], retTypes.v[i], fn, &requireScalarPromotion))
+            if (!canDispatch(retTypes.v[j], retSyms.v[j], retTypes.v[i], fn, &requireScalarPromotion))
               best = false;
             if (requireScalarPromotion)
               best = false;
@@ -7673,6 +7756,21 @@ static void resolveReturnType(FnSymbol* fn)
     if (!fn->iteratorInfo) {
       if (retTypes.n == 0)
         retType = dtVoid;
+    }
+  }
+
+  // For iterators, return arrays/domains by reference
+  if (fn->isIterator() &&
+      isRecordWrappedType(retType) &&
+      fn->retTag == RET_VALUE) {
+    fn->retTag = RET_REF;
+  }
+
+  if (fn->returnsRefOrConstRef() &&
+      !returnTupleOfRefAsValueInIterator(fn, retType)) {
+    if (!retType->symbol->hasFlag(FLAG_REF)) {
+      makeRefType(retType);
+      retType = retType->refType;
     }
   }
 
