@@ -659,6 +659,7 @@ FnSymbol* buildIfExpr(Expr* e, Expr* e1, Expr* e2) {
   FnSymbol* ifFn = new FnSymbol(astr("_if_fn", istr(uid++)));
   ifFn->addFlag(FLAG_COMPILER_NESTED_FUNCTION);
   ifFn->addFlag(FLAG_INLINE);
+  ifFn->addFlag(FLAG_AUTOMATIC_REF_RETURN_INTENT);
   VarSymbol* tmp1 = newTemp();
   VarSymbol* tmp2 = newTemp();
   tmp1->addFlag(FLAG_MAYBE_PARAM);

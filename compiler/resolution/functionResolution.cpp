@@ -7511,6 +7511,50 @@ computeReturnExprs(BaseAST* ast,
   AST_CHILDREN_CALL(ast, computeReturnExprs, retSymbol, retExprs);
 }
 
+// If all returns are:
+//   * outer / global variables
+//   * ref arguments   (this part is TODO)
+// then adjust the return intent to be ref/const ref.
+//
+// For now, this transformation only applies to functions
+// with FLAG_AUTOMATIC_REF_RETURN_INTENT. That flag
+// is notably applied to if-expr functions in buildIfExpr.
+// In the future, we may wish to enable it more broadly.
+static void
+automaticRefReturnIntent(FnSymbol* fn, Vec<Symbol*>& retSyms) {
+
+  if (true /* TODO - hello5-taskpar fails with this */ )
+    return;
+
+  // Only do this to functions that opt-in
+  if (!fn->hasFlag(FLAG_AUTOMATIC_REF_RETURN_INTENT))
+    return;
+
+  // Only do this to functions that have RET_VALUE retTag
+  if (fn->retTag != RET_VALUE)
+    return;
+
+  bool automaticRef = true;
+
+  forv_Vec(Symbol, sym, retSyms) {
+    // If any return is not an outer/global variable, don't return by ref.
+    if (!sym) {
+      // returning a call/expression, not a variable
+      automaticRef = false;
+    } else {
+      // returning a variable. is it a local?
+      if (sym->defPoint->getFunction() == fn)
+        automaticRef = false;
+      // otherwise, returning outer/global variable
+    }
+  }
+
+  // Change return intent to reference.
+  if (automaticRef) {
+    fn->retTag = RET_REF;
+  }
+}
+
 static void
 insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
   if (CallExpr* call = toCallExpr(ast)) {
@@ -7731,6 +7775,8 @@ static void resolveReturnType(FnSymbol* fn)
 
       retSyms.add(sym);
     }
+
+    automaticRefReturnIntent(fn, retSyms);
 
     // Now compute the return type.
     if (retExprs.n == 1)
