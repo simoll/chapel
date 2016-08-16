@@ -5840,9 +5840,15 @@ preFoldCoerce(CallExpr* call) {
     // Can we coerce from the argument to the function return type?
     // Note that rhsType here is the function return type (since
     // that is what the primitive returns as its type).
-    if (fromType == toType || canParamCoerce(fromType, fromParamSym, toType)) {
-      // Replace the whole PRIM_COERCE with new SymExpr(fromSym)
+    if (fromType == toType) {
+      // Replace the whole PRIM_COERCE with its argument.
       Expr* result = call->get(1)->remove();
+      call->replace(result);
+      return result;
+    } else if(canParamCoerce(fromType, fromParamSym, toType)) {
+      // Replace the PRIM_COERCE with a PRIM_CAST
+      Expr* arg = call->get(1)->remove();
+      Expr* result = new CallExpr(PRIM_CAST, toType->symbol, arg);
       call->replace(result);
       return result;
     } else if (canCoerce(fromType, fromParamSym, toType, NULL, &promotes)) {
@@ -5856,6 +5862,35 @@ preFoldCoerce(CallExpr* call) {
 
   return call;
 }
+
+static void
+checkReturnRefInPreFold(CallExpr* call)
+{
+  FnSymbol* fn = call->getFunction();
+  if (!fn->hasFlag(FLAG_WRAPPER)) {
+    SymExpr* lhs = NULL;
+    // check legal var function return
+    if (CallExpr* move = toCallExpr(call->parentExpr)) {
+      if (move->isPrimitive(PRIM_MOVE)) {
+        lhs = toSymExpr(move->get(1));
+        if (lhs && lhs->var == fn->getReturnSymbol()) {
+          SymExpr* ret = toSymExpr(call->get(1));
+          INT_ASSERT(ret);
+          if (ret->var->defPoint->getFunction() == move->getFunction() &&
+              !isReferenceType(ret->var->type) &&
+              !ret->var->type->symbol->hasFlag(FLAG_ITERATOR_RECORD) &&
+              !ret->var->type->symbol->hasFlag(FLAG_ARRAY))
+            // Should this conditional include domains, distributions, sync and/or single?
+            USR_FATAL(ret, "illegal expression to return by ref");
+          if (fn->retTag == RET_REF)
+            if (ret->var->isConstant() || ret->var->isParameter())
+              USR_FATAL(ret, "function cannot return constant by ref");
+        }
+      }
+    }
+  }
+}
+
 
 static Expr*
 preFold(Expr* expr) {
@@ -6303,28 +6338,12 @@ preFold(Expr* expr) {
         result = call->get(1)->remove();
         call->replace(result);
       } else {
+        checkReturnRefInPreFold(call);
+
         // This test is turned off if we are in a wrapper function.
         FnSymbol* fn = call->getFunction();
         if (!fn->hasFlag(FLAG_WRAPPER)) {
           SymExpr* lhs = NULL;
-          // check legal var function return
-          if (CallExpr* move = toCallExpr(call->parentExpr)) {
-            if (move->isPrimitive(PRIM_MOVE)) {
-              lhs = toSymExpr(move->get(1));
-              if (lhs && lhs->var == fn->getReturnSymbol()) {
-                SymExpr* ret = toSymExpr(call->get(1));
-                INT_ASSERT(ret);
-                if (ret->var->defPoint->getFunction() == move->getFunction() &&
-                    !ret->var->type->symbol->hasFlag(FLAG_ITERATOR_RECORD) &&
-                    !ret->var->type->symbol->hasFlag(FLAG_ARRAY))
-                  // Should this conditional include domains, distributions, sync and/or single?
-                  USR_FATAL(ret, "illegal expression to return by ref");
-                if (fn->retTag == RET_REF)
-                  if (ret->var->isConstant() || ret->var->isParameter())
-                    USR_FATAL(ret, "function cannot return constant by ref");
-              }
-            }
-          }
           //
           // check that the operand of 'addr of' is a legal lvalue.
           if (SymExpr* rhs = toSymExpr(call->get(1))) {
@@ -6365,6 +6384,9 @@ preFold(Expr* expr) {
         call->replace(result);
       }
     } else if (call->isPrimitive(PRIM_COERCE)) {
+      FnSymbol* fn = call->getFunction();
+      if (fn->retTag == RET_REF)
+        checkReturnRefInPreFold(call);
       result = preFoldCoerce(call);
     } else if (call->isPrimitive(PRIM_TYPE_TO_STRING)) {
       SymExpr* se = toSymExpr(call->get(1));
