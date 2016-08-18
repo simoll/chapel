@@ -543,16 +543,24 @@ static bool is_void_return(CallExpr* call) {
 static void insertRetMove(FnSymbol* fn, VarSymbol* retval, CallExpr* ret) {
   Expr* ret_expr = ret->get(1);
   ret_expr->remove();
+
+  Expr* coerce = NULL;
   if (fn->retExprType && !fn->returnsRefOrConstRef())
   {
     // This is the case for a declared return type.
-    ret->insertBefore(new CallExpr(PRIM_MOVE, retval,
-                      new CallExpr(PRIM_COERCE, ret_expr,
-                        fn->retExprType->body.tail->copy())));
+    coerce = new CallExpr(PRIM_COERCE,
+                          ret_expr,
+                          new SymExpr(fn),
+                          fn->retExprType->body.tail->copy());
   } else {
     // Otherwise, use PRIM_COERCE to adjust reference level
-    ret->insertBefore(new CallExpr(PRIM_MOVE, retval, new CallExpr(PRIM_COERCE, ret_expr)));
+    // by not passing in a type expression as the 3rd argument.
+    coerce = new CallExpr(PRIM_COERCE,
+                          ret_expr,
+                          new SymExpr(fn));
   }
+
+  ret->insertBefore(new CallExpr(PRIM_MOVE, retval, coerce));
 }
 
 // Following normalization, each function contains only one return statement

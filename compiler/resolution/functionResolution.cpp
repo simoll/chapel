@@ -197,6 +197,7 @@ SymbolMap paramMap;
 //#
 //# Static Variables
 //#
+static bool resolutionStarted = false;
 static int explainCallLine;
 static ModuleSymbol* explainCallModule;
 
@@ -338,6 +339,7 @@ isOuterVar(Symbol* sym, FnSymbol* fn, Symbol* parent = NULL);
 static bool
 usesOuterVars(FnSymbol* fn, Vec<FnSymbol*> &seen);
 static Type* resolveTypeAlias(SymExpr* se);
+static void resolveReturnType(FnSymbol* fn);
 static Expr* preFold(Expr* expr);
 static void foldEnumOp(int op, EnumSymbol *e1, EnumSymbol *e2, Immediate *imm);
 static bool isSubType(Type* sub, Type* super);
@@ -4447,7 +4449,9 @@ static void resolveMove(CallExpr* call) {
   INT_ASSERT(lhs);
 
   FnSymbol* fn = toFnSymbol(call->parentSymbol);
-  bool isReturn = fn ? lhs == fn->getReturnSymbol() : false;
+  bool isReturn = false;
+  if (fn && lhs == fn->getReturnSymbol())
+    isReturn = true;
 
   if (lhs->hasFlag(FLAG_TYPE_VARIABLE) && !isTypeExpr(rhs)) {
     if (isReturn) {
@@ -4476,6 +4480,17 @@ static void resolveMove(CallExpr* call) {
     }
   }
 
+  // Workaround: if the lhs is not defined in this function (!)
+  // don't resolve its type now.
+  // This can happen with iterators and coforall functions.
+
+  if (lhs->defPoint->getFunction() != fn &&
+      lhs->hasFlag(FLAG_RVV)) {
+    // don't set another functions return-value-valiable to
+    // the wrong type based upon this function.
+    return;
+  }
+
   Type* rhsType = rhs->typeInfo();
 
   if (rhsType == dtVoid) {
@@ -4498,8 +4513,11 @@ static void resolveMove(CallExpr* call) {
     }
   }
 
-  if (lhs->type == dtUnknown || lhs->type == dtNil)
+  if (lhs->type == dtUnknown || lhs->type == dtNil) {
     lhs->type = rhsType;
+    if (lhs->id == breakOnResolveID)
+      gdbShouldBreakHere();
+  }
 
   Type* lhsType = lhs->type;
 
@@ -5805,10 +5823,9 @@ static Expr* resolvePrimInit(CallExpr* call)
 static Expr*
 preFoldCoerce(CallExpr* call) {
 
-  FnSymbol* fn = toFnSymbol(call->parentSymbol);
+  FnSymbol* fn = getPrimCoerceFn(call);
 
   //resolveDefaultGenericType(call);
-  INT_ASSERT(call->isPrimitive(PRIM_COERCE));
 
   // If the argument to coerce is param/type, we need to
   // remove the PRIM_COERCE.
@@ -5817,9 +5834,9 @@ preFoldCoerce(CallExpr* call) {
 
   if (fn->retTag == RET_TYPE ||
       fn->retTag == RET_PARAM)
-    fromParamExpr = call->get(1);
+    fromParamExpr = getPrimCoerceArg(call);
 
-  if (SymExpr* se = toSymExpr(call->get(1))) {
+  if (SymExpr* se = toSymExpr(fromParamExpr)) {
     Symbol* sym = se->var;
     if (sym->isParameter() ||
         sym->hasFlag(FLAG_TYPE_VARIABLE) ) {
@@ -5842,12 +5859,12 @@ preFoldCoerce(CallExpr* call) {
     // that is what the primitive returns as its type).
     if (fromType == toType) {
       // Replace the whole PRIM_COERCE with its argument.
-      Expr* result = call->get(1)->remove();
+      Expr* result = getPrimCoerceArg(call)->remove();
       call->replace(result);
       return result;
     } else if(canParamCoerce(fromType, fromParamSym, toType)) {
       // Replace the PRIM_COERCE with a PRIM_CAST
-      Expr* arg = call->get(1)->remove();
+      Expr* arg = getPrimCoerceArg(call)->remove();
       Expr* result = new CallExpr(PRIM_CAST, toType->symbol, arg);
       call->replace(result);
       return result;
@@ -5864,9 +5881,8 @@ preFoldCoerce(CallExpr* call) {
 }
 
 static void
-checkReturnRefInPreFold(CallExpr* call)
+checkReturnRefInPreFold(CallExpr* call, FnSymbol* fn)
 {
-  FnSymbol* fn = call->getFunction();
   if (!fn->hasFlag(FLAG_WRAPPER)) {
     SymExpr* lhs = NULL;
     // check legal var function return
@@ -6338,10 +6354,10 @@ preFold(Expr* expr) {
         result = call->get(1)->remove();
         call->replace(result);
       } else {
-        checkReturnRefInPreFold(call);
+        FnSymbol* fn = call->getFunction();
+        checkReturnRefInPreFold(call, fn);
 
         // This test is turned off if we are in a wrapper function.
-        FnSymbol* fn = call->getFunction();
         if (!fn->hasFlag(FLAG_WRAPPER)) {
           SymExpr* lhs = NULL;
           //
@@ -6384,9 +6400,9 @@ preFold(Expr* expr) {
         call->replace(result);
       }
     } else if (call->isPrimitive(PRIM_COERCE)) {
-      FnSymbol* fn = call->getFunction();
+      FnSymbol* fn = getPrimCoerceFn(call);
       if (fn->retTag == RET_REF)
-        checkReturnRefInPreFold(call);
+        checkReturnRefInPreFold(call, fn);
       result = preFoldCoerce(call);
     } else if (call->isPrimitive(PRIM_TYPE_TO_STRING)) {
       SymExpr* se = toSymExpr(call->get(1));
@@ -7540,11 +7556,13 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
       if (call->isPrimitive(PRIM_MOVE)) {
         if (SymExpr* lhs = toSymExpr(call->get(1))) {
           Type* lhsType = lhs->var->type;
-          if (lhsType != dtUnknown) {
+          { // TODO -- remove this block, re-indent
             Expr* rhs = call->get(2);
             Type* rhsType = rhs->typeInfo();
             CallExpr* rhsCall = toCallExpr(rhs);
 
+            // TODO -- getPrimCoerceFn / getPrimCoerceArg / getPrimCoerceType
+            // update normalize generation of PRIM_COERCE
             if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
               rhsType = rhsCall->get(1)->typeInfo();
             }
@@ -7553,6 +7571,9 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
             bool typesDiffer = (rhsType != lhsType &&
                                 rhsType->refType != lhsType &&
                                 rhsType != lhsType->refType);
+
+            if (lhsType == dtUnknown)
+              typesDiffer = false;
 
             SET_LINENO(rhs);
 
@@ -7564,19 +7585,20 @@ insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts) {
             // but the = call works better in cases where an array is returned.
             if (rhsCall && rhsCall->isPrimitive(PRIM_COERCE)) {
               // handle move lhs, coerce rhs
-              Expr* from = rhsCall->get(1);
+              Expr* from = getPrimCoerceArg(rhsCall);
               SymExpr* fromTypeExpr = NULL;
               Symbol* fromType = rhsCall->typeInfo()->symbol;
               Symbol* to = lhs->var;
+              FnSymbol* returnedInFn = getPrimCoerceFn(rhsCall);
 
-              if (rhsCall->numActuals() == 2) {
-                fromTypeExpr = toSymExpr(rhsCall->get(2));
+              // Handle the optional type argument to PRIM_COERCE
+              fromTypeExpr = toSymExpr(getPrimCoerceType(rhsCall));
+              if (fromTypeExpr)
                 fromType = fromTypeExpr->var;
-              }
 
               bool haveRef = isReferenceType(from->typeInfo());
-              bool needRef = fn->returnsRefOrConstRef() ||
-                             isReferenceType(fn->retType);
+              bool needRef = returnedInFn->returnsRefOrConstRef() ||
+                             isReferenceType(returnedInFn->retType);
 
               if (!typesDiffer) {
                 // types are the same. remove coerce and
@@ -7716,6 +7738,66 @@ static bool returnTupleOfRefAsValueInIterator(FnSymbol* fn, Type* retType)
   }
 }
 
+
+// This is called from returnInfoCoerce, which
+// in turn will be called by calling typeInfo() on a PRIM_COERCE.
+// While it is normally called during resolution, it is technically
+// possible that it can be called before then.
+Type* computeCoerceType(CallExpr* call)
+{
+  Expr* passedType = getPrimCoerceType(call);
+  Type* type = NULL;
+  if (passedType)
+    type = passedType->typeInfo();
+  else
+    // PRIM_COERCE did not include a type, just use argument type
+    type = getPrimCoerceArg(call)->typeInfo();
+
+  // Now adjust type for the reference level
+  FnSymbol* fn = getPrimCoerceFn(call);
+  bool useValue = (fn->retTag == RET_VALUE);
+  if (doNotChangeRetToValue(fn))
+    useValue = false;
+
+  bool tupleOfRefInIterator = returnTupleOfRefAsValueInIterator(fn, type);
+  if (useValue || tupleOfRefInIterator)
+    type = type->getValType();
+
+  // ref/const ref return intent causes a ref type to be returned
+  bool makeReference = fn->returnsRefOrConstRef();
+
+  // Iterators return arrays/domains by reference
+  if (fn->isIterator() &&
+      isRecordWrappedType(type) &&
+      fn->retTag == RET_VALUE) {
+    makeReference = true;
+  }
+
+  // don't try to return tuples containing refs by ref
+  if (tupleOfRefInIterator)
+    makeReference = false;
+
+  // no need to make a reference if we already have reference type
+  if (isReferenceType(type))
+    makeReference = false;
+
+  // adjust the returned type to be a reference type
+  if (makeReference) {
+    if (type->refType)
+      type = type->refType;
+    else {
+      if (resolutionStarted) {
+        makeRefType(type);
+        type = type->refType;
+      } else {
+        type = dtUnknown;
+      }
+    }
+  }
+
+  return type;
+}
+
 static void resolveReturnType(FnSymbol* fn)
 {
   // Resolve return type.
@@ -7730,16 +7812,12 @@ static void resolveReturnType(FnSymbol* fn)
     Vec<Type*> retTypes;
     Vec<Symbol*> retSyms;
 
-    bool useValue = (fn->retTag == RET_VALUE);
-    if (doNotChangeRetToValue(fn))
-      useValue = false;
-
     forv_Vec(Expr, expr, retExprs) {
       Symbol* sym = NULL;
 
+      // This ->typeInfo() call will invoke computeCoerceType above
+      // in the typical case that the returned expression is a PRIM_COERCE.
       Type* useType = expr->typeInfo();
-      if (useValue || returnTupleOfRefAsValueInIterator(fn, useType))
-        useType = useType->getValType();
 
       retTypes.add(useType);
 
@@ -7781,22 +7859,10 @@ static void resolveReturnType(FnSymbol* fn)
     }
   }
 
-  // For iterators, return arrays/domains by reference
-  if (fn->isIterator() &&
-      isRecordWrappedType(retType) &&
-      fn->retTag == RET_VALUE) {
-    fn->retTag = RET_REF;
-  }
-
-  if (fn->returnsRefOrConstRef() &&
-      !returnTupleOfRefAsValueInIterator(fn, retType)) {
-    if (!retType->symbol->hasFlag(FLAG_REF)) {
-      makeRefType(retType);
-      retType = retType->refType;
-    }
-  }
-
   ret->type = retType;
+  if (ret->id == breakOnResolveID)
+    gdbShouldBreakHere();
+
   if (!fn->iteratorInfo) {
     if (retType == dtUnknown)
       USR_FATAL(fn, "unable to resolve return type");
@@ -8433,6 +8499,9 @@ computeStandardModuleSet() {
 
 void
 resolve() {
+
+  resolutionStarted = true;
+
   parseExplainFlag(fExplainCall, &explainCallLine, &explainCallModule);
 
   computeStandardModuleSet();

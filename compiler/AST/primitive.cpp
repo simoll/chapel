@@ -302,17 +302,6 @@ returnInfoVirtualMethodCall(CallExpr* call) {
   return fn->retType;
 }
 
-static Type*
-returnInfoCoerce(CallExpr* call) {
-  // 1 actual is used to adjust ref level
-  if (call->numActuals() == 1)
-    return call->get(1)->typeInfo();
-
-  Type* t = call->get(2)->typeInfo();
-  return t;
-}
-
-
 // print the number of each type of primitive present in the AST
 void printPrimitiveCounts(const char* passName) {
   int primCounts[NUM_KNOWN_PRIMS];
@@ -640,7 +629,7 @@ initPrimitive() {
   // If there is no second argument, it simply adjusts the reference
   // level appropriately for returning (based on the function
   // and the return intent).
-  prim_def(PRIM_COERCE, "coerce", returnInfoCoerce);
+  prim_def(PRIM_COERCE, "coerce", computeCoerceType);
 
   prim_def(PRIM_CALL_RESOLVES, "call resolves", returnInfoBool);
   prim_def(PRIM_METHOD_CALL_RESOLVES, "method call resolves", returnInfoBool);
@@ -668,4 +657,32 @@ VarSymbol* newMemDesc(const char* str) {
   memDescsMap.put(s, memDescVar);
   memDescsVec.add(s);
   return memDescVar;
+}
+
+
+FnSymbol*
+getPrimCoerceFn(CallExpr* call) {
+  INT_ASSERT(call->isPrimitive(PRIM_COERCE));
+
+  SymExpr* se = toSymExpr(call->get(2));
+  INT_ASSERT(se);
+  FnSymbol* fn = toFnSymbol(se->var);
+  INT_ASSERT(fn);
+
+  return fn;
+}
+
+Expr*
+getPrimCoerceArg(CallExpr* call) {
+  INT_ASSERT(call->isPrimitive(PRIM_COERCE));
+  return call->get(1); // if this changes, check checkReturnRefInPreFold
+}
+
+Expr*
+getPrimCoerceType(CallExpr* call) {
+  INT_ASSERT(call->isPrimitive(PRIM_COERCE));
+  if (call->numActuals() == 3)
+    return call->get(3);
+  else
+    return NULL;
 }

@@ -25,6 +25,8 @@
 class CallExpr;
 class Type;
 class VarSymbol;
+class Expr;
+class FnSymbol;
 
 enum PrimitiveTag {
   PRIM_UNKNOWN = 0,    // use for any primitives not in this list
@@ -290,5 +292,18 @@ extern Map<const char*, VarSymbol*> memDescsMap;
 extern Vec<const char*> memDescsVec;
 
 VarSymbol* newMemDesc(const char* str);
+
+
+// Get the parts of a PRIM_COERCE
+// In the future, these should be methods on a PrimExpr.
+FnSymbol* getPrimCoerceFn(CallExpr* call);
+Expr* getPrimCoerceArg(CallExpr* call);
+Expr* getPrimCoerceType(CallExpr* call);
+
+// This function is declared in functionResolution.cpp
+// but it is declared here because it is run when ->typeInfo()
+// is invoked on a PRIM_COERCE.
+Type* computeCoerceType(CallExpr* call);
+
 
 #endif
