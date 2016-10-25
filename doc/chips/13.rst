@@ -170,7 +170,8 @@ the statement `returnArray() = otherArray` should be an error just as
 `returnRecord() = otherRecord` is. It is less clear what it means for the
 versions setting an element, such as returnArray()[1] = 2.
 
-Thus, the current behavior does not match the specification.
+Thus, the current behavior for returning arrays does not appear to match
+the specification.
 
 .. commented-out
 
@@ -516,6 +517,64 @@ added. Each row in this table corresponds to a particular use of an expression
 `<expr>`. Each column indicates the kind the expression `<expr>`. Blank spaces
 indicate that no copy or move initialization is necessary.
 
+Here is the table for pre-1.13:
+
+auto = autoCopy
+init = initCopy
+
+========================  ==========  =========  =========  ============  ============
+operation                 value call  local var  outer var  ref argument  ref/ref call
+========================  ==========  =========  =========  ============  ============
+variable initialization   init        init       init       init          init     
+call as `in` argument     auto+init   init       init       init          init    
+field initialization      auto+auto   auto       auto       auto          auto
+value return              auto+auto   auto       auto       auto          auto    
+========================  ==========  =========  =========  ============  ============
+
+Here is the table for strings/user records after 1.13:
+
+========================  ==========  =========  =========  ============  ============
+operation                 value call  local var  outer var  ref argument  ref/ref call
+========================  ==========  =========  =========  ============  ============
+variable initialization               init       init       init          init     
+call as `in` argument     init        init       init       init          init    
+field initialization      auto        auto       auto       auto          auto     
+value return                                     auto       x?            auto    
+========================  ==========  =========  =========  ============  ============
+
+*value return, ref argument case seems to be an ommission* 
+code in callDestructors seems to treat it, but string7.chpl shows
+error/core dump.
+
+Here is Plan B:
+
+========================  ===========  =========  ===========  ============  ============
+operation                 value call   local var  outer var    ref argument  ref/ref call
+========================  ===========  =========  ===========  ============  ============
+variable initialization   unalias      copy       copy         copy          copy     
+call as `in` argument     unalias      copy       copy         copy          copy
+cls field initialization  unalias      copy       copy         copy          copy     
+r/t field initialization  alias        alias      alias        alias         alias
+value return              onRet        onRet      alias/onRet  alias/onRet   alias/onRet  
+========================  ===========  =========  ===========  ============  ============
+
+copy = initCopy
+alias = autoCopy
+
+newArray(tok) -> set this.scopeToken = tok
+unalias       -> if this.owned==false || this.isslice { this.ptr = this.ptr.clone(); this.owned = true; }
+alias         -> owned=false; dst.scopeToken = src.scopeToken; dst.ptr = src.ptr;
+onRet(tok)    -> if (this.owned == false || this.isslice ) && this.scopeToken == tok { this.ptr = this.ptr.clone(); this.owned = true; }
+
+  -> default copy/initCopy calls copy/initCopy on fields
+  -> default alias/autoCopy calls alias/autoCopy on fields
+  -> default unalias calls unalias on fields
+  -> default onret calls onret on fields
+
+Q: field initialization seems pretty different...
+
+Here is alternative described in this document:
+
 ========================  ==========  =========  =========  ============  ============
 operation                 value call  local var  outer var  ref argument  ref/ref call
 ========================  ==========  =========  =========  ============  ============
@@ -523,9 +582,8 @@ variable initialization   move        copy       copy       copy          copy
 field initialization      move        copy       copy       copy          copy     
 call as `in` argument     move        copy       copy       copy          copy
 value return              move        move       copy (1)   copy (1)      copy
-ref return                error       error            
-call as `ref` argument                                
 ========================  ==========  =========  =========  ============  ============
+
 
 (1) copy on value return can be skipped according to
 :ref:`automatic-ref-return`.
