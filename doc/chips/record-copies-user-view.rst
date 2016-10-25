@@ -72,7 +72,7 @@ This strategy is meant to support the following use cases:
  * records storing some data in buffer (e.g. BigInt record) (see
    :ref:`record-copies-buffer`)
  * strings (see :ref:`record-copies-strings`)
- * arrays (see :ref:`record-copies-arrays`)
+ * arrays (see :ref:`record-copies`)
 
 In particular, if records contain pointers, the expectation is that
 typical use of the record will always copy the pointed-to data, or will

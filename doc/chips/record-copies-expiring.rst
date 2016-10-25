@@ -116,8 +116,7 @@ the `postcopy` function. This choice can be made at runtime.  Since the
 new user variable - by implementing a `postmove` function a record designer can
 control this behavior. We have already observed that there are other reasons
 for the `string` and `_array` implementations to do this - see
-:ref:`record-copies-strings`
-and :ref:`record-copies-arrays`.
+:ref:`record-copies-strings`.
 
 This optimization still meets the *unique storage for a record's fields* idea
 from :ref:`record-copies-user-view` since the optimized-away copy is from a dead variable.
