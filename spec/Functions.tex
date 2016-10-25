@@ -129,7 +129,7 @@ function-name:
 
 operator-name: one of
   + $ $ $ $ - $ $ $ $ * $ $ $ $ / $ $ $ $ % $ $ $ $ ** $ $ $ $ ! $ $ $ $ == $ $ $ $ != $ $ $ $ <= $ $ $ $ >= $ $ $ $ < $ $ $ $ > $ $ $ $ << $ $ $ $ >> $ $ $ $ & $ $ $ $ | $ $ $ $ ^ $ $ $ $ ~
-  += $ $ $ $ -= $ $ $ $ *= $ $ $ $ /= $ $ $ $ %= $ $ $ $ **= $ $ $ $ &= $ $ $ $ |= $ $ $ $ ^= $ $ $ $ <<= $ $ $ $ >>= $ $ $ $ <=>
+  += $ $ $ $ -= $ $ $ $ *= $ $ $ $ /= $ $ $ $ %= $ $ $ $ **= $ $ $ $ &= $ $ $ $ |= $ $ $ $ ^= $ $ $ $ <<= $ $ $ $ >>= $ $ $ $ <=> $ $ $ $ <~>
 
 argument-list:
   ( formals[OPT] )
@@ -371,7 +371,7 @@ or \emph{abstract}.  Concrete intents are those in which the semantics
 of the intent keyword are independent of the argument's type.
 Abstract intents are those in which the keyword (or lack thereof)
 expresses a general intention that will ultimately be implemented via
-one of the conrete intents.  The specific choice of concrete intent
+one of the concrete intents.  The specific choice of concrete intent
 depends on the argument's type and may be implementation-defined.
 Abstract intents are provided to support productivity and code reuse.
 
@@ -1071,7 +1071,7 @@ listed in the following table:
 \hline
 unary & \verb@+ - ! ~@ \\
 binary & \verb@+ - * / % ** == <= >= < > << >> & | ^ by@ \\
-& \verb@+= -= *= /= %= **= &= |= ^= <<= >>= <=>@ \\
+& \verb@+= -= *= /= %= **= &= |= ^= <<= >>= <=> <~>@ \\
 \hline
 \end{tabular}
 \end{center}

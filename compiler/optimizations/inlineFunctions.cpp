@@ -48,22 +48,44 @@ inlineCall(FnSymbol* fn, CallExpr* call, Vec<FnSymbol*>& canRemoveRefTempSet) {
   for_formals_actuals(formal, actual, call) {
     SymExpr* se = toSymExpr(actual);
     INT_ASSERT(se);
-    if ((formal->intent & INTENT_REF) && canRemoveRefTempSet.set_in(fn)) {
-      if (se->var->hasFlag(FLAG_REF_TEMP)) {
-        if (CallExpr* move = findRefTempInit(se)) {
-          SymExpr* origSym = NULL;
-          if (CallExpr* addrOf = toCallExpr(move->get(2))) {
-            INT_ASSERT(addrOf->isPrimitive(PRIM_ADDR_OF));
-            origSym = toSymExpr(addrOf->get(1));
-          } else {
-            origSym = toSymExpr(move->get(2));
+    if((formal->intent & INTENT_REF)) {
+      // BHARSH TODO: Michael suggested this code will be unnecessary when
+      // QualifiedType is used everywhere and ref-ness is no longer stored in
+      // the 'type' field.
+      if (canRemoveRefTempSet.set_in(fn)) {
+        if (se->var->hasFlag(FLAG_REF_TEMP)) {
+          if (CallExpr* move = findRefTempInit(se)) {
+            SymExpr* origSym = NULL;
+            if (CallExpr* addrOf = toCallExpr(move->get(2))) {
+              INT_ASSERT(addrOf->isPrimitive(PRIM_ADDR_OF));
+              origSym = toSymExpr(addrOf->get(1));
+            } else {
+              origSym = toSymExpr(move->get(2));
+            }
+            INT_ASSERT(origSym);
+            map.put(formal, origSym->var);
+            se->var->defPoint->remove();
+            move->remove();
+            continue;
           }
-          INT_ASSERT(origSym);
-          map.put(formal, origSym->var);
-          se->var->defPoint->remove();
-          move->remove();
-          continue;
         }
+      }
+
+     if(!isReferenceType(formal->type) &&
+        formal->type->getRefType() == actual->typeInfo()) {
+        // Passing an actual that is ref(t) to a formal t with intent ref.
+        Expr* point = call->getStmtExpr();
+        VarSymbol* tmp = newTemp(astr("i_", formal->name), formal->type);
+        tmp->qual = QUAL_REF;
+        DefExpr* def = new DefExpr(tmp);
+        CallExpr* move;
+        move = new CallExpr(PRIM_MOVE,
+                            tmp,
+                            new CallExpr(PRIM_SET_REFERENCE, se->var));
+        point->insertBefore(def);
+        point->insertBefore(move);
+        map.put(formal, tmp);
+        continue;
       }
     }
     map.put(formal, se->var);
@@ -95,10 +117,10 @@ inlineCall(FnSymbol* fn, CallExpr* call, Vec<FnSymbol*>& canRemoveRefTempSet) {
     call->replace(return_value);
 }
 
-// Ideally we would compute this after inling all nested functions, but that
-// doesn't work due to some cases that explictly expect a ref and have deref
-// calls. Future work would be to find those cases and make change this check
-// to support nested inling if possible.
+// Ideally we would compute this after inlining all nested functions, but that
+// doesn't work due to some cases that explicitly expect a ref and have deref
+// calls. Future work would be to find those cases and change this check to
+// support nested inlining if possible.
 static bool canRemoveRefTemps(FnSymbol* fn) {
   if (!fn) // primitive
     return true;
@@ -121,9 +143,9 @@ static bool canRemoveRefTemps(FnSymbol* fn) {
   return true;
 }
 
-// Search for the first assingment (a PRIM_MOVE) to a ref temp. If found, the
+// Search for the first assignment (a PRIM_MOVE) to a ref temp. If found, the
 // CallExpr doing the assignment will be returned, otherwise NULL. This works
-// because a ref temp's DefExpr and inital assignment are inserted togther
+// because a ref temp's DefExpr and initial assignment are inserted together
 // inside of insertReferenceTemps.
 static CallExpr* findRefTempInit(SymExpr* se) {
   Expr* expr = se->var->defPoint->next;

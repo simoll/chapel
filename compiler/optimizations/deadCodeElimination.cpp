@@ -56,7 +56,7 @@ static unsigned int deadModuleCount;
 // remove condStmts  with empty bodies
 // remove jumps to labels that immmediately follow
 //
-// This may require multiple passses to converge e.g.
+// This may require multiple passes to converge e.g.
 //
 // A block statement that contains an empty block statement
 //
@@ -144,12 +144,15 @@ void deadExpressionElimination(FnSymbol* fn) {
           expr->isPrimitive(PRIM_GET_MEMBER_VALUE) ||
           expr->isPrimitive(PRIM_GET_MEMBER) ||
           expr->isPrimitive(PRIM_DEREF) ||
-          expr->isPrimitive(PRIM_ADDR_OF)) {
+          expr->isPrimitive(PRIM_ARRAY_GET) ||
+          expr->isPrimitive(PRIM_ADDR_OF) ||
+          expr->isPrimitive(PRIM_SET_REFERENCE)) {
         if (expr->isStmtExpr())
           expr->remove();
       }
 
-      if (expr->isPrimitive(PRIM_MOVE) || expr->isPrimitive(PRIM_ASSIGN))
+      if (expr->isPrimitive(PRIM_MOVE) ||
+          expr->isPrimitive(PRIM_ASSIGN))
         if (SymExpr* lhs = toSymExpr(expr->get(1)))
           if (SymExpr* rhs = toSymExpr(expr->get(2)))
             if (lhs->var == rhs->var)
@@ -580,12 +583,11 @@ void removeDeadIterResumeGotos() {
 // Make sure there are no iterResumeGotos to remove.
 // Reset removedIterResumeLabels.
 //
-void verifyNcleanRemovedIterResumeGotos() {
+void verifyRemovedIterResumeGotos() {
   forv_Vec(LabelSymbol, labsym, removedIterResumeLabels) {
     if (!isAlive(labsym) && isAlive(labsym->iterResumeGoto))
       INT_FATAL("unexpected live goto for a dead removedIterResumeLabels label - missing a call to removeDeadIterResumeGotos?");
   }
-  removedIterResumeLabels.clear();
 }
 
 // 2014/10/15

@@ -475,8 +475,8 @@ Range assignment is legal when:
 \item An implicit conversion is allowed from \chpl{idxType} of the source range
        to \chpl{idxType} of the destination range type,
 \item the two range types have the same \chpl{boundedType}, and
-\item either the destination range is stridable or the source range's
-      stride is 1.
+\item either the destination range is stridable or the source range
+      is not stridable.
 \end{itemize}
 
 \subsection{Range Comparisons}
@@ -602,7 +602,7 @@ range-expression:
 \subsection{By Operator}
 \label{By_Operator_For_Ranges}
 \index{ranges!strided}
-\index{by (range)@\chpl{by} (range)}
+\index{by@\chpl{by}!on ranges}
 \index{operators!by (range)@\chpl{by} (range)}
 \index{ranges!by operator@\chpl{by} operator}
 
@@ -702,10 +702,11 @@ R into the expression.
 
 
 \subsection{Align Operator}
-\label{Align_Operator}
+\label{Align_Operator_For_Ranges}
 \index{ranges!align}
-\index{align@\chpl{align}}
-\index{operator!align@\chpl{align}}
+\index{align@\chpl{align}!on ranges}
+\index{operators!align (range)@\chpl{align} (range)}
+\index{ranges!align operator@\chpl{align} operator}
 
 The \chpl{align} operator can be applied to any range, and creates a new range
 with the given alignment.  
@@ -798,7 +799,7 @@ away.  Specifically:
 \item If the count times the stride is positive, the low bound is preserved
 and the high bound is adjusted to be one less than the low bound plus that
 product.
-\item Iff the count times the stride is negative, the high bound is preserved
+\item If the count times the stride is negative, the high bound is preserved
 and the low bound is adjusted to be one greater than the high bound plus that
 product.
 \end{itemize}
