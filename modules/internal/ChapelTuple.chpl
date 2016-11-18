@@ -184,7 +184,8 @@ module ChapelTuple {
   // iterator support for tuples
   //
   pragma "no doc"
-  iter _tuple.these() {
+  pragma "reference to const when const this"
+  iter _tuple.these() ref {
 
     if !isHomogeneousTuple(this) then
       compilerError("Cannot iterate over non-homogeneous tuples. If you intended to use zippered iteration, add the new keyword 'zip' before the tuple of iteratable expressions.");
