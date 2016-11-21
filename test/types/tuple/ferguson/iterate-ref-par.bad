@@ -1,0 +1,6 @@
+iterate-ref-par.chpl:15: error: illegal lvalue in assignment
+iterate-ref-par.chpl:19: error: illegal lvalue in assignment
+iterate-ref-par.chpl:24: error: illegal lvalue in assignment
+iterate-ref-par.chpl:25: error: illegal lvalue in assignment
+iterate-ref-par.chpl:31: error: illegal lvalue in assignment
+iterate-ref-par.chpl:32: error: illegal lvalue in assignment
