@@ -158,6 +158,9 @@ Map<FnSymbol*,FnSymbol*> iteratorLeaderMap; // iterator->leader map for promotio
 Map<FnSymbol*,FnSymbol*> iteratorFollowerMap; // iterator->leader map for promotion
 std::map<CallExpr*, CallExpr*> eflopiMap; // for-loops over par iterators
 
+static int maxUserCoercions = 1;
+static int nUserCoercions = 0;
+
 //#
 //# Static Function Declarations
 //#
@@ -395,13 +398,9 @@ resolveUninsertedCall(BlockStmt* insideBlock,
   return call->isResolved();
 }
 
-// Resolve a call to do with a particular type.
-static FnSymbol*
-resolveUninsertedCall(Type* type, CallExpr* call, bool checkonly) {
-
-  BlockStmt* insideBlock = NULL;
-  Expr* beforeExpr = NULL;
-
+static
+void getUninsertedCallPoint(Type* type, BlockStmt*& insideBlock, Expr*& beforeExpr)
+{
   if (type->defaultInitializer) {
     if (type->defaultInitializer->instantiationPoint)
       insideBlock = type->defaultInitializer->instantiationPoint;
@@ -410,6 +409,16 @@ resolveUninsertedCall(Type* type, CallExpr* call, bool checkonly) {
   } else {
     insideBlock = chpl_gen_main->body;
   }
+}
+
+// Resolve a call to do with a particular type.
+static FnSymbol*
+resolveUninsertedCall(Type* type, CallExpr* call, bool checkonly) {
+
+  BlockStmt* insideBlock = NULL;
+  Expr* beforeExpr = NULL;
+
+  getUninsertedCallPoint(type, insideBlock, beforeExpr);
 
   return resolveUninsertedCall(insideBlock, beforeExpr, call, checkonly);
 }
@@ -1602,6 +1611,84 @@ bool canCoerceTuples(Type*     actualType,
 
 
 
+static
+bool canUserDefinedCoerce(Type* actualType, Symbol* actualSym,
+                          Type* formalType, FnSymbol* fn)
+{
+  if (nUserCoercions >= maxUserCoercions ) return false;
+
+  BlockStmt* block = NULL;
+  if (actualSym && actualSym->defPoint && actualSym->defPoint->getStmtExpr()) {
+    SET_LINENO(actualSym);
+    block = new BlockStmt();
+    actualSym->defPoint->getStmtExpr()->insertBefore(block);
+  } else {
+    SET_LINENO(actualType);
+    block = new BlockStmt();
+
+    BlockStmt* insideBlock = NULL;
+    Expr* beforeExpr = NULL;
+
+    getUninsertedCallPoint(actualType, insideBlock, beforeExpr);
+
+    if (insideBlock)
+      insideBlock->insertAtHead(block);
+    else if (beforeExpr)
+      beforeExpr->insertBefore(block);
+    else
+      INT_ASSERT(insideBlock != NULL || beforeExpr != NULL);
+  }
+
+  SET_LINENO(block);
+  // Check for a user-defined coercion between formalType and actualType.
+  TypeSymbol* fts = formalType->symbol;
+  VarSymbol* tmp = newTemp("coerce_tmp", actualType);
+  tmp->addFlag(FLAG_COERCE_TEMP);
+  DefExpr* def = new DefExpr(tmp);
+
+  CallExpr* castCall = new CallExpr("coercible", gMethodToken, tmp, fts);
+  FnSymbol *resolved_coerce = NULL;
+  bool can_coerce = false;
+
+  // Add the cast to the AST so that it has a scope, etc.
+
+  block->insertAtTail(def);
+  block->insertAtTail(castCall);
+
+  nUserCoercions++;
+  resolved_coerce = tryResolveCall(castCall);
+  nUserCoercions--;
+
+  if( resolved_coerce && resolved_coerce->retTag != RET_PARAM ) {
+    USR_FATAL_CONT(actualSym, "could use supplied coercion");
+    USR_FATAL(resolved_coerce, "coercible method exists but does not return a param");
+    resolved_coerce = NULL;
+  }
+
+  if( resolved_coerce ) {
+    // Extract the return value out of the instantiated function.
+    Expr* result = resolve_type_expr(castCall);
+
+    if( !result || !is_bool_type(result->typeInfo()) ) {
+      USR_FATAL_CONT(actualSym, "could use supplied coercion");
+      USR_FATAL(resolved_coerce, "coercible method exists but does not return bool");
+    }
+    SymExpr* symExpr = toSymExpr(result);
+    VarSymbol* varSym = NULL;
+    if( symExpr ) varSym = toVarSymbol(symExpr->symbol());
+    if(varSym && varSym->immediate ) {
+      can_coerce = varSym->immediate->bool_value();
+    } else {
+      USR_FATAL_CONT(actualSym, "could use supplied coercion");
+      USR_FATAL(resolved_coerce, "coercible method exists but does not return immediate");
+    }
+  }
+
+  // Remove the block from the AST
+  block->remove();
+  return can_coerce;
+}
+
 //
 // returns true iff dispatching the actualType to the formalType
 // results in a coercion.
@@ -1668,6 +1755,9 @@ bool canCoerce(Type*     actualType,
 
   if (actualType->symbol->hasFlag(FLAG_C_PTR_CLASS) &&
       (formalType == dtCVoidPtr))
+    return true;
+
+  if (canUserDefinedCoerce(actualType, actualSym, formalType, fn))
     return true;
 
   return false;
