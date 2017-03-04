@@ -118,6 +118,9 @@ public:
   virtual bool   enterTryStmt        (TryStmt*           node);
   virtual void   exitTryStmt         (TryStmt*           node);
 
+  virtual bool   enterCatchStmt      (CatchStmt*         node);
+  virtual void   exitCatchStmt       (CatchStmt*         node);
+
 protected:
   bool outputVector (FILE* fp, std::vector<const char*> vec);
 

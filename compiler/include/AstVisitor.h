@@ -51,6 +51,7 @@ class ExternBlockStmt;
 class CondStmt;
 class GotoStmt;
 class TryStmt;
+class CatchStmt;
 
 class AstVisitor
 {
@@ -153,6 +154,9 @@ public:
 
   virtual bool   enterTryStmt        (TryStmt*           node) = 0;
   virtual void   exitTryStmt         (TryStmt*           node) = 0;
+
+  virtual bool   enterCatchStmt      (CatchStmt*         node) = 0;
+  virtual void   exitCatchStmt       (CatchStmt*         node) = 0;
 };
 
 #endif

@@ -262,3 +262,11 @@ void AstVisitorTraverse::exitTryStmt(TryStmt* node)
 {
 
 }
+
+bool AstVisitorTraverse::enterCatchStmt(CatchStmt* node) {
+  return true;
+}
+
+void AstVisitorTraverse::exitCatchStmt(CatchStmt* node) {
+
+}
