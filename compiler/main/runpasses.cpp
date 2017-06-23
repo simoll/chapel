@@ -58,7 +58,7 @@ struct PassInfo {
 #define LOG_processIteratorYields              'y'
 #define LOG_flattenFunctions                   'e'
 #define LOG_cullOverReferences                 'O'
-#define LOG_lowerErrorHandling                 NUL
+#define LOG_lowerErrorHandling                 '1'
 #define LOG_callDestructors                    'd'
 #define LOG_lowerIterators                     'L'
 #define LOG_parallel                           'P'
