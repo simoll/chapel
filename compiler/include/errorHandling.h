@@ -20,6 +20,16 @@
 #ifndef _ERROR_HANDLING_H_
 #define _ERROR_HANDLING_H_
 
+class BlockStmt;
+
 void lowerErrorHandling();
+
+
+// Returns `true` if a block can exit with an error
+//  (e.g. by calling 'throw' or a throwing function,
+//   when these are not handled by try! or catch).
+// This function is useful to infer 'throws' for
+// certain compiler-introduced functions.
+bool canBlockThrow(BlockStmt* blk);
 
 #endif
