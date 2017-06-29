@@ -43,6 +43,7 @@
 #include "ModuleSymbol.h"
 #include "ParamForLoop.h"
 #include "PartialCopyData.h"
+#include "parser.h"
 #include "passes.h"
 #include "postFold.h"
 #include "preFold.h"
@@ -6671,6 +6672,12 @@ static void resolveOther() {
     // Resolve the function that will print module init order
     resolveFns(gPrintModuleInitFn);
   }
+
+  std::vector<FnSymbol*> fns = getWellKnownFunctions();
+  for_vector(FnSymbol, fn, fns) {
+    if (!fn->hasFlag(FLAG_GENERIC))
+      resolveFns(fn);
+  }
 }
 
 
@@ -7149,9 +7156,18 @@ static void removeCopyFns(Type* t) {
 }
 
 static void removeUnusedFunctions() {
+  std::set<FnSymbol*> concreteWellKnownFunctionsSet;
+
+  std::vector<FnSymbol*> fns = getWellKnownFunctions();
+  for_vector(FnSymbol, fn, fns) {
+    if (!fn->hasFlag(FLAG_GENERIC))
+      concreteWellKnownFunctionsSet.insert(fn);
+  }
+
   // Remove unused functions
   forv_Vec(FnSymbol, fn, gFnSymbols) {
-    if (fn->hasFlag(FLAG_PRINT_MODULE_INIT_FN)) continue;
+    if (concreteWellKnownFunctionsSet.count(fn) > 0) continue;
+    //fn->hasFlag(FLAG_PRINT_MODULE_INIT_FN)) continue;
     if (fn->defPoint && fn->defPoint->parentSymbol) {
       if (fn->defPoint->parentSymbol == stringLiteralModule) continue;
 

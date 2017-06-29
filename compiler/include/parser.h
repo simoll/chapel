@@ -24,6 +24,7 @@ class BlockStmt;
 class UseStmt;
 
 #include "symbol.h"
+#include <vector>
 
 extern int         chplLineno;
 extern bool        chplParseString;
@@ -52,5 +53,7 @@ const char*        pathNameForStandardFile(const char* baseName);
 BlockStmt*         parseString(const char* string,
                                const char* filename,
                                const char* msg);
+
+std::vector<FnSymbol*> getWellKnownFunctions();
 
 #endif
