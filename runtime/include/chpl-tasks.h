@@ -268,6 +268,13 @@ chpl_task_prvData_t* chpl_task_getPrvData(void);
 #endif
 
 //
+// Chapel module-code managed task private data
+//
+void* chpl_task_getChapelData(void);
+int chpl_task_getChapelDataSize(void);
+
+
+//
 // Can this tasking layer support remote caching?
 //
 // (In practice this answers: "Are tasks bound to specific pthreads
