@@ -122,6 +122,10 @@ buildEmptyWrapper(FnSymbol* fn, CallInfo* info) {
   if (fn->hasFlag(FLAG_COMPILER_GENERATED))
     wrapper->addFlag(FLAG_WAS_COMPILER_GENERATED);
   wrapper->addFlag(FLAG_COMPILER_GENERATED);
+
+  if (fn->throwsError())
+    wrapper->throwsErrorInit();
+
   return wrapper;
 }
 
