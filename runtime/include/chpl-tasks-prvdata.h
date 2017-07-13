@@ -24,15 +24,16 @@
 #include "chpl-comm-task-decls.h"
 
 // Type for Chapel-managed task private data
-// This will be copied to new tasks.
+// to be copied to new tasks.
+// Includes 'serial_state'
 typedef struct {
-  unsigned char data[32];
+  unsigned char data[40];
 } chpl_task_ChapelData_t;
 
 // The type for task private data
 typedef struct {
   chpl_comm_taskPrvData_t comm_data;
-  chpl_task_ChapelData_t  chapel_data;
+  //chpl_task_ChapelData_t  chapel_data;
 } chpl_task_prvData_t;
 
 #endif

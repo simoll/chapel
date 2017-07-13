@@ -209,12 +209,8 @@ size_t chpl_task_getDefaultCallStackSize(void)
 }
 
 
-void* chpl_task_getChapelData(void)
+chpl_task_ChapelData_t* chpl_task_getChapelData(void)
 {
-  chpl_task_prvData_t* prv = chpl_task_getPrvData();
-  return &(prv->chapel_data.data[0]);
-}
-int chpl_task_getChapelDataSize(void)
-{
-  return sizeof(chpl_task_ChapelData_t);
+  chpl_task_bundle_t* prv = chpl_task_getPrvBundle();
+  return &(prv->state);
 }

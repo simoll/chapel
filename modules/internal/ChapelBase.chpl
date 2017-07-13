@@ -915,6 +915,7 @@ module ChapelBase {
   // statement is needed because the call to sub() will do a remote
   // fork (on) if needed.
   pragma "dont disable remote value forwarding"
+  pragma "down end count fn"
   proc _downEndCount(e: _EndCount) {
     e.i.sub(1, memory_order_release);
   }
@@ -957,18 +958,21 @@ module ChapelBase {
     }
   }
 
-  proc _upEndCount(param countRunningTasks=true) {
-    var e = __primitive("get end count");
+  proc _upDynamicEndCount(param countRunningTasks=true) {
+    var e = __primitive("get dynamic end count");
     _upEndCount(e, countRunningTasks);
   }
 
-  proc _downEndCount() {
-    var e = __primitive("get end count");
+  // MPF - should this have
+  //pragma "dont disable remote value forwarding"
+  pragma "down end count fn"
+  proc _downDynamicEndCount() {
+    var e = __primitive("get dynamic end count");
     _downEndCount(e);
   }
 
-  proc _waitEndCount(param countRunningTasks=true) {
-    var e = __primitive("get end count");
+  proc _waitDynamicEndCount(param countRunningTasks=true) {
+    var e = __primitive("get dynamic end count");
     _waitEndCount(e, countRunningTasks);
   }
 

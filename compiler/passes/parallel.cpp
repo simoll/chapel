@@ -426,24 +426,9 @@ bundleArgs(CallExpr* fcall, BundleArgsFnData &baData) {
 
   if (!fn->hasFlag(FLAG_ON)) {
     for_actuals(arg, fcall) {
-      bool strcmp_found = false;
-      bool type_found = false;
 
       Type* baseType = arg->getValType();
       if (baseType->symbol->hasFlag(FLAG_END_COUNT)) {
-        type_found = true;
-      }
-
-      // This strcmp code was moved from expr.cpp codegen,
-      // but there has got to be a better way to do this!
-      if (strstr(baseType->symbol->name, "_EndCount") != NULL) {
-        strcmp_found = true;
-      }
-
-      // If this assert never fires, we can remove the strcmp version.
-      INT_ASSERT(type_found == strcmp_found);
-
-      if( type_found || strcmp_found ) {
         SymExpr* symexp = toSymExpr(arg);
         endCount = symexp->symbol();
 
@@ -455,37 +440,40 @@ bundleArgs(CallExpr* fcall, BundleArgsFnData &baData) {
       }
     }
 
-    INT_ASSERT(endCount);
+    if (!fn->hasFlag(FLAG_BEGIN))
+      INT_ASSERT(endCount);
 
-    // Now get the taskList field out of the end count.
+    if (endCount != NULL) {
+      // Now get the taskList field out of the end count.
 
-    taskList = newTemp(astr("_taskList", fn->name), QualifiedType(QUAL_REF, dtCVoidPtr));
+      taskList = newTemp(astr("_taskList", fn->name), QualifiedType(QUAL_REF, dtCVoidPtr));
 
-    // If the end count is a reference, dereference it.
-    // EndCount is a class.
-    if (endCount->isRef()) {
-      VarSymbol *endCountDeref = newTemp(astr("_end_count_deref", fn->name),
-                                         endCount->getValType());
-      fcall->insertBefore(new DefExpr(endCountDeref));
-      fcall->insertBefore(new CallExpr(PRIM_MOVE, endCountDeref,
-                                         new CallExpr(PRIM_DEREF, endCount)));
-      endCount = endCountDeref;
+      // If the end count is a reference, dereference it.
+      // EndCount is a class.
+      if (endCount->isRef()) {
+        VarSymbol *endCountDeref = newTemp(astr("_end_count_deref", fn->name),
+                                           endCount->getValType());
+        fcall->insertBefore(new DefExpr(endCountDeref));
+        fcall->insertBefore(new CallExpr(PRIM_MOVE, endCountDeref,
+                                           new CallExpr(PRIM_DEREF, endCount)));
+        endCount = endCountDeref;
+      }
+
+      fcall->insertBefore(new DefExpr(taskList));
+      fcall->insertBefore(new CallExpr(PRIM_MOVE, taskList,
+                                       new CallExpr(PRIM_GET_MEMBER,
+                                                    endCount,
+                                                    endCount->typeInfo()->getField("taskList"))));
+
+
+      // Now get the node ID field for the end count,
+      // which is where the task list is stored.
+      taskListNode = newTemp(astr("_taskListNode", fn->name), dtInt[INT_SIZE_DEFAULT]);
+      fcall->insertBefore(new DefExpr(taskListNode));
+      fcall->insertBefore(new CallExpr(PRIM_MOVE, taskListNode,
+                                       new CallExpr(PRIM_WIDE_GET_NODE,
+                                                    endCount)));
     }
-
-    fcall->insertBefore(new DefExpr(taskList));
-    fcall->insertBefore(new CallExpr(PRIM_MOVE, taskList,
-                                     new CallExpr(PRIM_GET_MEMBER,
-                                                  endCount,
-                                                  endCount->typeInfo()->getField("taskList"))));
-
-
-    // Now get the node ID field for the end count,
-    // which is where the task list is stored.
-    taskListNode = newTemp(astr("_taskListNode", fn->name), dtInt[INT_SIZE_DEFAULT]);
-    fcall->insertBefore(new DefExpr(taskListNode));
-    fcall->insertBefore(new CallExpr(PRIM_MOVE, taskListNode,
-                                     new CallExpr(PRIM_WIDE_GET_NODE,
-                                                  endCount)));
   }
 
   // create wrapper-function that uses the class instance
@@ -504,7 +492,7 @@ static CallExpr* helpFindDownEndCount(BlockStmt* block)
   while (cur && (isCallExpr(cur) || isDefExpr(cur) || isBlockStmt(cur))) {
     if (CallExpr* call = toCallExpr(cur)) {
       if (call->isResolved())
-        if (strcmp(call->resolvedFunction()->name, "_downEndCount") == 0)
+        if (call->resolvedFunction()->hasFlag(FLAG_DOWN_END_COUNT_FN))
           return call;
     } else if (BlockStmt* inner = toBlockStmt(cur)) {
       // Need to handle local blocks since the compiler
@@ -543,7 +531,19 @@ static void moveDownEndCountToWrapper(FnSymbol* fn, FnSymbol* wrap_fn, Symbol* w
 
     FnSymbol* downEndCountFn = downEndCount->resolvedFunction();
 
+    if (downEndCount->numActuals() == 0) {
+      // Call downEndCount in the wrapper.
+      wrap_fn->insertAtTail(new CallExpr(downEndCountFn));
+
+      // Remove downEndCount from the task fn since it
+      // is now in the wrapper.
+      downEndCount->remove();
+
+      return;
+    }
+
     Expr* endCountTmp = downEndCount->get(1);
+
     Expr* cur = downEndCount->prev;
     ArgSymbol* whichArg = NULL;
     // Which argument is passed to the downEndCount?
@@ -1538,6 +1538,13 @@ void parallel() {
 }
 
 
+/* Lowers PRIM_GET_END_COUNT / PRIM_SET_END_COUNT for
+   managing the end-counts for cobegin and coforall.
+
+   End counts for sync/begin are managed by
+   PRIM_GET_DYNAMIC_END_COUNT / PRIM_SET_DYNAMIC_END_COUNT.
+   These are lowered here in to the corresponding calls.
+ */
 static void insertEndCounts()
 {
   Vec<FnSymbol*> queue;
@@ -1555,6 +1562,10 @@ static void insertEndCounts()
       if (!endCountMap.get(pfn))
         insertEndCount(pfn, call->get(1)->typeInfo(), queue, endCountMap);
       call->replace(new CallExpr(PRIM_MOVE, endCountMap.get(pfn), call->get(1)->remove()));
+    } else if (call->isPrimitive(PRIM_GET_DYNAMIC_END_COUNT)) {
+      call->replace(new CallExpr(gGetDynamicEndCount));
+    } else if (call->isPrimitive(PRIM_SET_DYNAMIC_END_COUNT)) {
+      call->replace(new CallExpr(gSetDynamicEndCount, call->get(1)->remove()));
     }
   }
 
