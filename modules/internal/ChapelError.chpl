@@ -29,13 +29,23 @@ module ChapelError {
     proc Error(_msg: string) {
       msg = _msg;
     }
+
+    pragma "no doc"
+    var _next: Error; // managed by lock in record ErrorGroupRecord
   }
 
-  // stores multiple errors when they can come up.
-  // TODO: should the base class Error have this capability?
-  class ErrorGroup : Error {
-    var _errors:list(Error);     // list of errors, owned by group
-    var _errorsLock: atomicbool; // lock for concurrent access
+  // Used by the runtime to accumulate errors. Needs
+  // only support adding errors concurrently. Errors
+  // will be read from this after all tasks that can add
+  // errors have completed; then it no longer needs
+  // to be parallel-safe.
+  pragma "no doc"
+  record chpl_ErrorGroup {
+    var _head: Error;
+    var _errorsLock: atomicbool;
+    // this atomic controls:
+    //  - _head
+    //  - all list elements ->_next
 
     inline proc _lockErrors() {
       // WARNING: If you are calling this function directly from
@@ -50,23 +60,32 @@ module ChapelError {
     proc append(err: Error) {
       on this {
         _lockErrors();
-        _errors.append(err);
+        var tmp = _head;
+        err._next = tmp;
+        _head = err;
         _unlockErrors();
       }
     }
+  }
+
+  // stores multiple errors when they can come up.
+  class ErrorGroup : Error {
+    var _head: Error;
     iter these() {
-      on this do _lockErrors();
-      for err in _errors {
-        yield err;
+      var e = _head;
+      while e != nil {
+	yield e;
+	e = e._next;
       }
-      _unlockErrors();
     }
 
     proc deinit() {
-      on this {
-        for err in _errors {
-          delete err;
-        }
+      var e = _head;
+      var todelete: Error;
+      while e != nil {
+        todelete = e;
+	e = e._next;
+        delete todelete;
       }
     }
   }

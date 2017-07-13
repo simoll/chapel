@@ -845,6 +845,7 @@ module ChapelBase {
     var i: iType,
         taskCnt: taskType,
         taskList: c_void_ptr = _defaultOf(c_void_ptr);
+    var errors: chpl_ErrorGroup;
   }
 
   // This function is called once by the initiating task.  No on
