@@ -712,6 +712,7 @@ extern FnSymbol *gGenericTupleDestroy;
 extern FnSymbol *gChplDeleteError;
 extern FnSymbol *gGetDynamicEndCount;
 extern FnSymbol *gSetDynamicEndCount;
+extern FnSymbol *gSaveTaskErrorFn;
 
 // These global symbols point to generic functions that
 // will be instantiated.

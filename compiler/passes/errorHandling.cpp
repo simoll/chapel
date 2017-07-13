@@ -130,6 +130,8 @@ try {
 // Static functions
 static bool canBlockThrow(BlockStmt* blk);
 static void checkErrorHandling(FnSymbol* fn);
+static bool isCompilerGeneratedFunction(FnSymbol* fn);
+static bool isTaskFunction(FnSymbol* fn);
 
 
 namespace {
@@ -177,6 +179,7 @@ bool ErrorHandlingVisitor::enterTryStmt(TryStmt* node) {
   SET_LINENO(node);
 
   VarSymbol*   errorVar     = newTemp("error", dtError);
+  errorVar->addFlag(FLAG_ERROR_VARIABLE);
   LabelSymbol* handlerLabel = new LabelSymbol("handler");
   TryInfo      info         = {errorVar, handlerLabel, node, node->body()};
   tryStack.push(info);
@@ -237,7 +240,9 @@ void ErrorHandlingVisitor::lowerCatches(const TryInfo& info) {
     BlockStmt* catchBody = catchStmt->body();
     DefExpr*   catchDef  = catchStmt->expr();
 
-    catchBody->insertAtTail(new CallExpr(gChplDeleteError, errorVar));
+    // TODO - find a better way
+    // maybe mark task wrapper functions as not needing errors to be deleted?
+    //catchBody->insertAtTail(new CallExpr(gChplDeleteError, errorVar));
     catchBody->remove();
 
     // catchall
@@ -296,6 +301,7 @@ bool ErrorHandlingVisitor::enterCallExpr(CallExpr* node) {
 
   if (FnSymbol* calledFn = node->resolvedFunction()) {
     if (calledFn->throwsError()) {
+
       SET_LINENO(node);
 
       VarSymbol* errorVar    = NULL;
@@ -313,6 +319,7 @@ bool ErrorHandlingVisitor::enterCallExpr(CallExpr* node) {
       } else {
         // without try, need an error variable
         errorVar = newTemp("error", dtError);
+        errorVar->addFlag(FLAG_ERROR_VARIABLE);
         insert->insertBefore(new DefExpr(errorVar));
 
         if (outError != NULL)
@@ -322,7 +329,17 @@ bool ErrorHandlingVisitor::enterCallExpr(CallExpr* node) {
       }
 
       node->insertAtTail(errorVar); // adding error argument to call
-      insert->insertAfter(errorCond(errorVar, errorPolicy));
+
+      // If we are calling a non-blocking task function,
+      // we'll lower the error handling in parallel.cpp.
+      if (calledFn->hasFlag(FLAG_NON_BLOCKING) ||
+          calledFn->hasFlag(FLAG_BEGIN) ||
+          calledFn->hasFlag(FLAG_COBEGIN_OR_COFORALL)) {
+        // Don't add errorPolicy block or condititonal.
+      } else {
+        // Regular operation
+        insert->insertAfter(errorCond(errorVar, errorPolicy));
+      }
     }
   } else if (node->isPrimitive(PRIM_THROW)) {
     SET_LINENO(node);
@@ -390,7 +407,7 @@ void lowerErrorHandling() {
 
   forv_Vec(FnSymbol, fn, gFnSymbols) {
     // Determine if compiler-generated fns should be marked 'throws'
-    if (fn->hasFlag(FLAG_ON)) {
+    if (isTaskFunction(fn)) {
       if (canBlockThrow(fn->body))
         fn->throwsErrorInit();
     } else {
@@ -410,6 +427,7 @@ void lowerErrorHandling() {
       SET_LINENO(fn);
 
       outError = new ArgSymbol(INTENT_REF, "error_out", dtError);
+      outError->addFlag(FLAG_ERROR_VARIABLE);
       fn->insertFormalAtTail(outError);
 
       epilogue = fn->getOrCreateEpilogueLabel();
@@ -516,9 +534,7 @@ bool CanThrowVisitor::enterCallExpr(CallExpr* node) {
           bool inCompilerGeneratedFn = false;
           if (FnSymbol* parentFn = toFnSymbol(node->parentSymbol)) {
             // Don't check wrapper functions in strict mode.
-            if (parentFn->hasFlag(FLAG_WRAPPER))
-              inCompilerGeneratedFn = true;
-            // TODO or on, begin, ...
+            inCompilerGeneratedFn = isCompilerGeneratedFunction(parentFn);
           }
 
           if (!inCompilerGeneratedFn) {
@@ -566,4 +582,18 @@ static void checkErrorHandling(FnSymbol* fn)
   CanThrowVisitor visit(fn->throwsError(), true);
 
   fn->body->accept(&visit);
+}
+
+static bool isTaskFunction(FnSymbol* fn)
+{
+  return fn->hasFlag(FLAG_ON) ||
+         fn->hasFlag(FLAG_LOCAL_ON) ||
+         fn->hasFlag(FLAG_BEGIN) ||
+         fn->hasFlag(FLAG_COBEGIN_OR_COFORALL);
+}
+
+static bool isCompilerGeneratedFunction(FnSymbol* fn)
+{
+  return isTaskFunction(fn) ||
+         fn->hasFlag(FLAG_WRAPPER);
 }

@@ -192,5 +192,6 @@ extern AggregateType* dtMainArgument;
 extern AggregateType* dtOnBundleRecord;
 extern AggregateType* dtTaskBundleRecord;
 extern AggregateType* dtError;
+extern AggregateType* dtEndCountBase;
 
 #endif

@@ -102,6 +102,7 @@ FnSymbol *gBuildStarTupleTypeNoRef = NULL;
 FnSymbol* gChplDeleteError = NULL;
 FnSymbol *gGetDynamicEndCount = NULL;
 FnSymbol *gSetDynamicEndCount = NULL;
+FnSymbol *gSaveTaskErrorFn = NULL;
 
 
 std::map<FnSymbol*,int> ftableMap;

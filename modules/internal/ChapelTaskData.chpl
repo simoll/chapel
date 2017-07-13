@@ -67,6 +67,7 @@ module ChapelTaskData {
     return ret;
   }
  
+  // TODO -- these won't be necessary since ErrorGroup is in _EndCount
   proc chpl_setErrorGroup(in group: ErrorGroup) {
     var prv = chpl_task_getChapelData():c_ptr(c_uchar);
     var i = chpl_offset_error;
@@ -110,6 +111,13 @@ module ChapelTaskData {
     // Using memcpy to avoid pointer type punning
     c_memcpy(c_ptrTo(ret), c_ptrTo(prv[i]), c_sizeof(bool));
     return ret;
+  }
+
+  // Propagate an error from a task to its caller / sync point.
+  proc chpl_save_task_error(e: _EndCountBase, err: Error) {
+    if err != nil {
+      e.errors.append(err);
+    }
   }
 
   // module init function - check sizes

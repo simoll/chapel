@@ -26,8 +26,12 @@ module ChapelError {
   class Error {
     var msg: string;
 
-    proc Error(_msg: string) {
+    proc init() {
+    }
+
+    proc init(_msg: string) {
       msg = _msg;
+      super.init();
     }
 
     pragma "no doc"
@@ -66,11 +70,30 @@ module ChapelError {
         _unlockErrors();
       }
     }
+    proc empty() {
+      return _head == nil;
+    }
+  }
+
+  // Converts from the internal record to a
+  // user-facing Error.
+  // TODO - call this instead of ErrorGroup.init for flexibility
+  proc chpl_convertErrorGroup(ref group:chpl_ErrorGroup) {
+    // This could return the actual Error if there was only one,
+    // instead of returning a singleton ErrorGroup.
   }
 
   // stores multiple errors when they can come up.
   class ErrorGroup : Error {
     var _head: Error;
+
+    pragma "no doc"
+    proc init(ref group:chpl_ErrorGroup) {
+      _head = group._head;
+      group._head = nil;
+      super.init("error group");
+    }
+
     iter these() {
       var e = _head;
       while e != nil {
@@ -90,6 +113,7 @@ module ChapelError {
     }
   }
 
+  pragma "no doc"
   proc chpl_delete_error(err: Error) {
     delete err;
   }

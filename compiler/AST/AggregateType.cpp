@@ -44,6 +44,7 @@ AggregateType* dtMainArgument      = NULL;
 AggregateType* dtOnBundleRecord    = NULL;
 AggregateType* dtTaskBundleRecord  = NULL;
 AggregateType* dtError             = NULL;
+AggregateType* dtEndCountBase      = NULL;
 
 AggregateType::AggregateType(AggregateTag initTag) :
   Type(E_AggregateType, NULL) {

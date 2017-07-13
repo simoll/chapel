@@ -837,15 +837,20 @@ module ChapelBase {
 
   config param useAtomicTaskCnt =  CHPL_NETWORK_ATOMICS!="none";
 
+  // Parent class for _EndCount instances so that it's easy
+  // to get 'errors' field from any generic instantiation.
+  class _EndCountBase {
+    var errors: chpl_ErrorGroup;
+    var taskList: c_void_ptr = _defaultOf(c_void_ptr);
+  }
+
   pragma "end count"
   pragma "no default functions"
-  class _EndCount {
+  class _EndCount : _EndCountBase {
     type iType;
     type taskType;
-    var i: iType,
-        taskCnt: taskType,
-        taskList: c_void_ptr = _defaultOf(c_void_ptr);
-    var errors: chpl_ErrorGroup;
+    var i: iType;
+    var taskCnt: taskType;
   }
 
   // This function is called once by the initiating task.  No on
@@ -862,9 +867,11 @@ module ChapelBase {
     type taskCntType = if !forceLocalTypes && useAtomicTaskCnt then atomic int
                                            else int;
     if forceLocalTypes {
-      return new _EndCount(chpl__processorAtomicType(int), taskCntType);
+      return new _EndCount(iType=chpl__processorAtomicType(int),
+                           taskType=taskCntType);
     } else {
-      return new _EndCount(chpl__atomicType(int), taskCntType);
+      return new _EndCount(iType=chpl__atomicType(int),
+                           taskType=taskCntType);
     }
   }
 
@@ -923,8 +930,11 @@ module ChapelBase {
 
   // This function is called once by the initiating task.  As above, no
   // on statement needed.
+  // called for
+  //  - implicit sync at end of main
+  // TODO pragma unchecked throws ? Or analysis?
   pragma "dont disable remote value forwarding"
-  proc _waitEndCount(e: _EndCount, param countRunningTasks=true) {
+  proc _waitEndCount(e: _EndCount, param countRunningTasks=true) throws {
     // See if we can help with any of the started tasks
     chpl_taskListExecute(e.taskList);
 
@@ -944,10 +954,16 @@ module ChapelBase {
       // re-add the task that was waiting for others to finish
       here.runningTaskCntAdd(1);
     }
+
+    // Throw any error raised by a task this is waiting for
+    if ! e.errors.empty() then
+      throw new ErrorGroup(e.errors);
   }
 
+  // TODO pragma unchecked throws ? Or analysis?
+  // called for cobegin/coforall
   pragma "dont disable remote value forwarding"
-  proc _waitEndCount(e: _EndCount, param countRunningTasks=true, numTasks) {
+  proc _waitEndCount(e: _EndCount, param countRunningTasks=true, numTasks) throws {
     // See if we can help with any of the started tasks
     chpl_taskListExecute(e.taskList);
 
@@ -957,6 +973,10 @@ module ChapelBase {
     if countRunningTasks {
       here.runningTaskCntSub(numTasks:int-1);
     }
+
+    // Throw any error raised by a task this is waiting for
+    if ! e.errors.empty() then
+      throw new ErrorGroup(e.errors);
   }
 
   proc _upDynamicEndCount(param countRunningTasks=true) {
@@ -972,9 +992,14 @@ module ChapelBase {
     _downEndCount(e);
   }
 
-  proc _waitDynamicEndCount(param countRunningTasks=true) {
+  // TODO pragma unchecked throws ?
+  proc _waitDynamicEndCount(param countRunningTasks=true) throws {
     var e = __primitive("get dynamic end count");
     _waitEndCount(e, countRunningTasks);
+
+    // Throw any error raised by a task this sync statement is waiting for
+    if ! e.errors.empty() then
+      throw new ErrorGroup(e.errors);
   }
 
   pragma "command line setting"

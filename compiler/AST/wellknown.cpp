@@ -75,7 +75,8 @@ static WellKnownType sWellKnownTypes[] = {
   { "chpl_main_argument",    &dtMainArgument,     false },
   { "chpl_comm_on_bundle_t", &dtOnBundleRecord,   false },
   { "chpl_task_bundle_t",    &dtTaskBundleRecord, false },
-  { "Error",                 &dtError,            true  }
+  { "Error",                 &dtError,            true  },
+  { "_EndCountBase",         &dtEndCountBase,     true  },
 };
 
 // Gather well-known types from among types known at this point.
@@ -215,6 +216,11 @@ static WellKnownFn sWellKnownFns[] = {
     FLAG_UNKNOWN
   },
 
+  {
+    "chpl_save_task_error",
+    &gSaveTaskErrorFn,
+    FLAG_UNKNOWN
+  },
 
 };
 
