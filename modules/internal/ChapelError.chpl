@@ -93,6 +93,9 @@ module ChapelError {
       group._head = nil;
       super.init("error group");
     }
+    proc init() {
+      _head = nil;
+    }
 
     iter these() {
       var e = _head;

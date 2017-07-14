@@ -924,7 +924,10 @@ module ChapelBase {
   // fork (on) if needed.
   pragma "dont disable remote value forwarding"
   pragma "down end count fn"
-  proc _downEndCount(e: _EndCount) {
+  proc _downEndCount(e: _EndCount, err: Error) {
+    // save the task error
+    chpl_save_task_error(e, err);
+    // inform anybody waiting that we're done
     e.i.sub(1, memory_order_release);
   }
 
@@ -987,9 +990,9 @@ module ChapelBase {
   // MPF - should this have
   //pragma "dont disable remote value forwarding"
   pragma "down end count fn"
-  proc _downDynamicEndCount() {
+  proc _downDynamicEndCount(err: Error) {
     var e = __primitive("get dynamic end count");
-    _downEndCount(e);
+    _downEndCount(e, err);
   }
 
   // TODO pragma unchecked throws ?

@@ -91,6 +91,7 @@ typedef struct {
   AggregateType* ctype;
   FnSymbol*  wrap_fn;
   std::vector<uint8_t> needsDestroy;
+  bool adjustErrors;
   // TODO -- more directly record the mapping between
   // actuals, formals, and bundle class fields
 } BundleArgsFnData;
@@ -215,6 +216,13 @@ static void create_arg_bundle_class(FnSymbol* fn, CallExpr* fcall, ModuleSymbol*
   mod->block->insertAtHead(new DefExpr(new_c));
 
   baData.ctype = ctype;
+
+  // Also set adjustErrors to 'true' for any nonblocking
+  // task/on that throws.
+  baData.adjustErrors = fn->throwsError() &&
+                        (fn->hasFlag(FLAG_NON_BLOCKING) ||
+                         fn->hasFlag(FLAG_BEGIN) ||
+                         fn->hasFlag(FLAG_COBEGIN_OR_COFORALL));
 }
 
 /// Optionally autoCopies an argument being inserted into an argument bundle.
@@ -387,11 +395,14 @@ bundleArgs(CallExpr* fcall, BundleArgsFnData &baData) {
   int i = 1;
   for_actuals(arg, fcall)
   {
-    // Don't bundle error variables, handle them directly
-    if (SymExpr* se = toSymExpr(arg)) {
-      if (se->symbol()->hasFlag(FLAG_ERROR_VARIABLE)) {
-        baData.needsDestroy.push_back(false);
-        continue;
+    // For anything nonblocking, don't bundle error variables,
+    // handle them directly
+    if (baData.adjustErrors) {
+      if (SymExpr* se = toSymExpr(arg)) {
+        if (se->symbol()->hasFlag(FLAG_ERROR_VARIABLE)) {
+          baData.needsDestroy.push_back(false);
+          continue;
+        }
       }
     }
 
@@ -506,7 +517,7 @@ bundleArgs(CallExpr* fcall, BundleArgsFnData &baData) {
 
   // Remove any error fields - they shouldn't be code-generated
   // since the errors are handled directly.
-  {
+  if (baData.adjustErrors) {
     AggregateType* ctype = baData.ctype;
     Symbol* toRemove = NULL;
     for_fields(field, ctype) {
@@ -551,8 +562,24 @@ static CallExpr* findDownEndCount(FnSymbol* fn)
   return helpFindDownEndCount(fn->body);
 }
 
+static bool isGetDynamicEndCount(CallExpr* call)
+{
+  if (call->isPrimitive(PRIM_GET_DYNAMIC_END_COUNT))
+    return true;
+  FnSymbol* fn = call->resolvedFunction();
+  if (fn && fn == gGetDynamicEndCount)
+    return true;
 
-static void moveDownEndCountToWrapper(FnSymbol* fn, FnSymbol* wrap_fn, Symbol* wrap_c, AggregateType* ctype)
+  return false;
+}
+
+// TODO: Could we represent the AST differently so that
+// the work of this pass is easier? E.g. don't add downEndCount until
+// this point?
+
+// Returns the EndCount variable used in the wrapper.
+static
+void moveDownEndCountToWrapper(FnSymbol* fn, FnSymbol* wrap_fn, Symbol* wrap_c, AggregateType* ctype, Symbol* error)
 {
   if (fn->hasFlag(FLAG_NON_BLOCKING) ||
       fn->hasEitherFlag(FLAG_BEGIN, FLAG_COBEGIN_OR_COFORALL)) {
@@ -566,7 +593,13 @@ static void moveDownEndCountToWrapper(FnSymbol* fn, FnSymbol* wrap_fn, Symbol* w
 
     if (downEndCount->numActuals() == 0) {
       // Call downEndCount in the wrapper.
-      wrap_fn->insertAtTail(new CallExpr(downEndCountFn));
+      CallExpr* call = new CallExpr(downEndCountFn);
+      if (error != NULL)
+        call->insertAtTail(error);
+      else
+        call->insertAtTail(gNil);
+
+      wrap_fn->insertAtTail(call);
 
       // Remove downEndCount from the task fn since it
       // is now in the wrapper.
@@ -577,10 +610,14 @@ static void moveDownEndCountToWrapper(FnSymbol* fn, FnSymbol* wrap_fn, Symbol* w
 
     Expr* endCountTmp = downEndCount->get(1);
 
+    QualifiedType endCountType = endCountTmp->qualType();
+
     Expr* cur = downEndCount->prev;
     ArgSymbol* whichArg = NULL;
+    bool getDynamicEndCount = false;
     // Which argument is passed to the downEndCount?
-    // This loop is meant to handle control-flow regions only.
+    // Or is it gotten dynamically?
+    // This loop is meant to handle control-free regions only.
     while (true) {
       SymExpr* se = toSymExpr(endCountTmp);
       if (ArgSymbol* arg = toArgSymbol(se->symbol())) {
@@ -595,53 +632,76 @@ static void moveDownEndCountToWrapper(FnSymbol* fn, FnSymbol* wrap_fn, Symbol* w
             if (dst->symbol() == se->symbol()) {
               if (SymExpr* src = toSymExpr(call->get(2)))
                 endCountTmp = src;
-              else if (CallExpr* subcall = toCallExpr(call->get(2)))
+              else if (CallExpr* subcall = toCallExpr(call->get(2))) {
                 if (subcall->isPrimitive(PRIM_DEREF))
                   endCountTmp = subcall->get(1);
+                else if (isGetDynamicEndCount(subcall)) {
+                  getDynamicEndCount = true;
+                  break;
+                }
+              }
             }
       cur = cur->prev;
     }
 
-    INT_ASSERT(whichArg != NULL);
+    INT_ASSERT(whichArg != NULL || getDynamicEndCount == true);
 
-    // figure out which arg is the i'th arg
-    int i = 1;
-    for_formals(formal, fn) {
-      if (formal == whichArg) break;
-      i++;
-    }
-    INT_ASSERT(i <= fn->numFormals());
-    // Now get the i'th class member. It should be an end count.
-    // Change that to the downEndCount call.
+    VarSymbol* localEndCount = NULL;
 
-    Symbol *field = ctype->getField(i+1); // +1 for rt header
-    INT_ASSERT(field->getValType()->symbol->hasFlag(FLAG_END_COUNT));
+    if (whichArg != NULL) {
+      // figure out which arg is the i'th arg
+      int i = 1;
+      for_formals(formal, fn) {
+        if (formal == whichArg) break;
+        i++;
+      }
+      INT_ASSERT(i <= fn->numFormals());
+      // Now get the i'th class member. It should be an end count.
+      // Change that to the downEndCount call.
 
-    VarSymbol* tmp = newTemp("endcount", field->qualType());
-    wrap_fn->insertAtTail(new DefExpr(tmp));
-    wrap_fn->insertAtTail(
-        new CallExpr(PRIM_MOVE, tmp,
-        new CallExpr(PRIM_GET_MEMBER_VALUE, wrap_c, field)));
+      Symbol *field = ctype->getField(i+1); // +1 for rt header
+      INT_ASSERT(field->getValType()->symbol->hasFlag(FLAG_END_COUNT));
 
-    if (field->isRef()) {
-      VarSymbol* derefTmp = newTemp("endcountDeref", field->type->getValType());
-      wrap_fn->insertAtTail(new DefExpr(derefTmp));
+      localEndCount = newTemp("endcount", field->qualType());
+      wrap_fn->insertAtTail(new DefExpr(localEndCount));
       wrap_fn->insertAtTail(
-          new CallExpr(PRIM_MOVE, derefTmp,
-          new CallExpr(PRIM_DEREF, tmp)));
+          new CallExpr(PRIM_MOVE, localEndCount,
+          new CallExpr(PRIM_GET_MEMBER_VALUE, wrap_c, field)));
 
-      tmp = derefTmp;
+      if (field->isRef()) {
+        VarSymbol* derefTmp = newTemp("endcountDeref", field->type->getValType());
+        wrap_fn->insertAtTail(new DefExpr(derefTmp));
+        wrap_fn->insertAtTail(
+            new CallExpr(PRIM_MOVE, derefTmp,
+            new CallExpr(PRIM_DEREF, localEndCount)));
+
+        localEndCount = derefTmp;
+      }
+    } else if (getDynamicEndCount == true) {
+      localEndCount = newTemp("endcount", endCountType);
+      wrap_fn->insertAtTail(new DefExpr(localEndCount));
+      wrap_fn->insertAtTail(
+          new CallExpr(PRIM_MOVE, localEndCount,
+            new CallExpr(PRIM_GET_DYNAMIC_END_COUNT)));
+    } else {
+      INT_FATAL("error");
     }
 
     // Call downEndCount in the wrapper.
-    wrap_fn->insertAtTail(new CallExpr(downEndCountFn, tmp));
+    CallExpr* call = new CallExpr(downEndCountFn, localEndCount);
+    if (error != NULL)
+      call->insertAtTail(error);
+    else
+      call->insertAtTail(gNil);
+
+    wrap_fn->insertAtTail(call);
 
     // Remove downEndCount from the task fn since it
     // is now in the wrapper.
     downEndCount->remove();
+
+    INT_ASSERT(localEndCount != NULL);
   }
-
-
 }
 
 static void create_block_fn_wrapper(FnSymbol* fn, CallExpr* fcall, BundleArgsFnData &baData)
@@ -652,10 +712,11 @@ static void create_block_fn_wrapper(FnSymbol* fn, CallExpr* fcall, BundleArgsFnD
   AggregateType* ctype = baData.ctype;
   FnSymbol *wrap_fn = new FnSymbol( astr("wrap", fn->name));
 
-  Symbol* endCount = NULL; // set below
-
   Symbol* error = NULL;
-  if (fn->throwsError()) {
+
+  // Create error variable, but not for blocking on statement
+  // This function will handle errors for non-blocking tasks/on
+  if (baData.adjustErrors) {
     // Create an error variable
     error = newTemp("error", dtError);
     wrap_fn->insertAtTail(new DefExpr(error));
@@ -733,7 +794,7 @@ static void create_block_fn_wrapper(FnSymbol* fn, CallExpr* fcall, BundleArgsFnD
   {
     // Skip runtime header
     if (i > 0) {
-      if (field->hasFlag(FLAG_ERROR_VARIABLE)) {
+      if (error != NULL && field->hasFlag(FLAG_ERROR_VARIABLE)) {
         // Add the error argument
         INT_ASSERT(error != NULL);
         call_orig->insertAtTail(error);
@@ -744,12 +805,6 @@ static void create_block_fn_wrapper(FnSymbol* fn, CallExpr* fcall, BundleArgsFnD
         wrap_fn->insertAtTail(
             new CallExpr(PRIM_MOVE, tmp,
             new CallExpr(PRIM_GET_MEMBER_VALUE, wrap_c, field)));
-
-        // Make a note of the tmp variable storing the end count
-        // so we can use it in calling chpl_save_task_error.
-        if (field->getValType()->symbol->hasFlag(FLAG_END_COUNT) &&
-            endCount == NULL)
-          endCount = tmp;
 
         // Special case:
         // If this is an on block, remember the first field,
@@ -789,25 +844,9 @@ static void create_block_fn_wrapper(FnSymbol* fn, CallExpr* fcall, BundleArgsFnD
     i++;
   }
 
-  // Add error-handling. If there was an error,
-  // report it to the calling task.
-  if (fn->throwsError()) {
-    INT_ASSERT(endCount);
-    INT_ASSERT(error);
-
-    VarSymbol* endCountBase = newTempConst("endCountBase", dtEndCountBase);
-    CallExpr* castEndCount = new CallExpr(PRIM_CAST,
-                                          dtEndCountBase->symbol,
-                                          endCount);
-
-    wrap_fn->insertAtTail(new DefExpr(endCountBase));
-    wrap_fn->insertAtTail(new CallExpr(PRIM_MOVE, endCountBase, castEndCount));
-    wrap_fn->insertAtTail(new CallExpr(gSaveTaskErrorFn, endCountBase, error));
-  }
-
   // Move the downEndCount at the tail of fn, if any,
   // to the wrapper.
-  moveDownEndCountToWrapper(fn, wrap_fn, wrap_c, ctype);
+  moveDownEndCountToWrapper(fn, wrap_fn, wrap_c, ctype, error);
 
   // Add finish fence to wrapper if it was requested
   // This supports --cache-remote and is set in createTaskFunctions

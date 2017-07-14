@@ -1,1 +1,12 @@
-OK
+basic: OK
+coforall: OK
+coforall: OK
+on: OK
+cobegin on: OK
+cobegin on: OK
+on cobegin: OK
+on cobegin: OK
+coforall on: OK
+coforall on: OK
+on coforall: OK
+on coforall: OK
