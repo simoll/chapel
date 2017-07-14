@@ -591,7 +591,7 @@ void moveDownEndCountToWrapper(FnSymbol* fn, FnSymbol* wrap_fn, Symbol* wrap_c, 
 
     FnSymbol* downEndCountFn = downEndCount->resolvedFunction();
 
-    if (downEndCount->numActuals() == 0) {
+    if (downEndCount->numActuals() == 1) {
       // Call downEndCount in the wrapper.
       CallExpr* call = new CallExpr(downEndCountFn);
       if (error != NULL)
