@@ -964,6 +964,10 @@ proc StencilArr.dsiDisplayRepresentation() {
 
 proc StencilArr.dsiGetBaseDom() return dom;
 
+proc StencilArr.dsiOwnsElements() : bool {
+  return !ignoreFluff;
+}
+
 //
 // NOTE: Each locale's myElems array must be initialized prior to setting up
 // the RAD cache.
@@ -1381,13 +1385,7 @@ iter StencilArr.dsiBoundaries(param tag : iterKind) where tag == iterKind.standa
 // array
 //
 pragma "no copy return"
-proc _array.noFluffView() {
-  var a = _value.dsiNoFluffView();
-  a._arrAlias = _value;
-  return _newArray(a);
-}
-
-proc StencilArr.dsiNoFluffView() {
+proc StencilArr.noFluffView() {
   var tempDist = new Stencil(dom.dist.boundingBox, dom.dist.targetLocales,
                              dom.dist.dataParTasksPerLocale, dom.dist.dataParIgnoreRunningTasks,
                              dom.dist.dataParMinGranularity, ignoreFluff=true);
@@ -1402,12 +1400,7 @@ proc StencilArr.dsiNoFluffView() {
   alias.myLocArr = this.myLocArr;
 
   newDom.add_arr(alias, locking=false);
-  return alias;
-}
-
-// wrapper
-proc _array.updateFluff() {
-  _value.dsiUpdateFluff();
+  return _newArray(alias);
 }
 
 //
@@ -1553,7 +1546,7 @@ proc StencilArr.shouldDoPackedUpdate() param : bool {
 // approach. What we really want is to do a naive transfer if the periodic
 // neighbor is the current locale.
 //
-proc StencilArr.dsiUpdateFluff() {
+proc StencilArr.updateFluff() {
   if isZeroTuple(dom.fluff) then return;
 
   if shouldDoPackedUpdate() && dom.dist.targetLocales.size > 1 {
@@ -1700,10 +1693,6 @@ proc StencilArr.doiCanBulkTransfer(viewDom) {
   if dom.stridable then
     for param i in 1..rank do
       if viewDom.dim(i).stride != 1 then return false;
-
-  // See above note regarding aliased arrays
-  if disableAliasedBulkTransfer then
-    if _arrAlias != nil then return false;
 
   return true;
 }

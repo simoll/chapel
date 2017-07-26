@@ -117,7 +117,7 @@ module ArrayViewRankChange {
   //
  class ArrayViewRankChangeDom: BaseRectangularDom {
     // the lower-dimensional index set that we represent upwards
-    var upDom: DefaultRectangularDom(rank, idxType, stridable);
+    forwarding var upDom: DefaultRectangularDom(rank, idxType, stridable);
 
     // the collapsed dimensions and indices in those dimensions
     //
@@ -175,57 +175,6 @@ module ArrayViewRankChange {
                                         ownsArrInstance=true);
     }
 
-    // TODO: Use delegation feature for these?
-    // TODO: Can't all these be implemented in ChapelArray given dsiDim()?
-
-    proc dsiNumIndices {
-      return upDom.dsiNumIndices;
-    }
-
-    proc dsiLow {
-      return upDom.dsiLow;
-    }
-
-    proc dsiHigh {
-      return upDom.dsiHigh;
-    }
-
-    proc dsiAlignedLow {
-      return upDom.dsiAlignedLow;
-    }
-
-    proc dsiAlignedHigh {
-      return upDom.dsiAlignedHigh;
-    }
-
-    proc dsiStride {
-      return upDom.dsiStride;
-    }
-
-    proc dsiAlignment {
-      return upDom.dsiAlignment;
-    }
-
-    proc dsiFirst {
-      return upDom.dsiFirst;
-    }
-
-    proc dsiLast {
-      return upDom.dsiLast;
-    }
-
-    proc dsiDim(upDim: int) {
-      return upDom.dsiDim(upDim);
-    }
-
-    proc dsiDims() {
-      return upDom.dsiDims();
-    }
-
-    proc dsiGetIndices() {
-      return upDom.dsiGetIndices();
-    }
-
     proc dsiSetIndices(inds) {
       // Free underlying domains if necessary
       this.dsiDestroyDom();
@@ -249,10 +198,6 @@ module ArrayViewRankChange {
 
     proc dsiAssignDomain(rhs: domain, lhsPrivate: bool) {
       chpl_assignDomainWithGetSetIndices(this, rhs);
-    }
-
-    proc dsiMember(i) {
-      return upDom.dsiMember(i);
     }
 
     iter these() {
@@ -496,6 +441,8 @@ module ArrayViewRankChange {
 
     const ownsArrInstance = false;
 
+    // Forward all unhandled methods to the privatized underlying array class
+    forwarding arr;
 
     //
     // standard generic aspects of arrays
@@ -687,16 +634,6 @@ module ArrayViewRankChange {
       return privDom.dsiLocalSubdomain();
     }
 
-    proc dsiNoFluffView() {
-      // For now avoid implementing 'noFluffView' on each class and use
-      // 'canResolve' to print a better error message.
-      if canResolveMethod(arr, "dsiNoFluffView") {
-        return arr.dsiNoFluffView();
-      } else {
-        compilerError("noFluffView is not supported on this array type.");
-      }
-    }
-
     //
     // privatization
     //
@@ -725,13 +662,6 @@ module ArrayViewRankChange {
     // bulk-transfer
     //
 
-    proc dsiSupportsBulkTransfer() param {
-      return arr.dsiSupportsBulkTransfer();
-    }
-
-    proc dsiSupportsBulkTransferInterface() param
-      return arr.dsiSupportsBulkTransferInterface();
-
     // Recursively builds up the view-domain given an initial tuple of
     // dimensions. Handles nested rank-changes.
     proc _viewHelper(dims) {
@@ -753,46 +683,6 @@ module ArrayViewRankChange {
     proc _getViewDom() {
       return _viewHelper(dom.dsiDims());
     }
-
-    // contiguous transfer support
-    proc doiUseBulkTransfer(B) {
-      return arr.doiUseBulkTransfer(B);
-    }
-
-    proc doiCanBulkTransfer(viewDom) {
-      return arr.doiCanBulkTransfer(viewDom);
-    }
-
-    proc doiBulkTransfer(B, viewDom) {
-      arr.doiBulkTransfer(B, viewDom);
-    }
-
-    // strided transfer support
-    proc doiUseBulkTransferStride(B) {
-      return arr.doiUseBulkTransferStride(B);
-    }
-
-    proc doiCanBulkTransferStride(viewDom) {
-      return arr.doiCanBulkTransferStride(viewDom);
-    }
-
-    proc doiBulkTransferStride(B, viewDom) {
-      arr.doiBulkTransferStride(B, viewDom);
-    }
-
-    // distributed transfer support
-    proc doiBulkTransferToDR(B, viewDom) {
-      arr.doiBulkTransferToDR(B, viewDom);
-    }
-
-    proc doiBulkTransferFromDR(B, viewDom) {
-      arr.doiBulkTransferFromDR(B, viewDom);
-    }
-
-    proc doiBulkTransferFrom(B, viewDom) {
-      arr.doiBulkTransferFrom(B, viewDom);
-    }
-
 
     //
     // utility functions used to set up the index cache
@@ -872,6 +762,10 @@ module ArrayViewRankChange {
       if ownsArrInstance {
         _delete_arr(_ArrInstance, _isPrivatized(_ArrInstance));
       }
+    }
+
+    proc dsiOwnsElements() : bool {
+      return false;
     }
   }  // end of class ArrayViewRankChangeArr
 

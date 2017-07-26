@@ -49,6 +49,7 @@ module ArrayViewSlice {
     // through the array field above.
     const indexCache = buildIndexCache();
 
+    forwarding arr;
 
     //
     // standard generic aspects of arrays
@@ -204,27 +205,12 @@ module ArrayViewSlice {
     // locality-oriented queries
     //
 
-    proc dsiTargetLocales() {
-      return arr.dsiTargetLocales();
-    }
-
     proc dsiHasSingleLocalSubdomain() param
       return privDom.dsiHasSingleLocalSubdomain();
 
     proc dsiLocalSubdomain() {
       return privDom.dsiLocalSubdomain();
     }
-
-    proc dsiNoFluffView() {
-      // For now avoid implementing 'noFluffView' on each class and use
-      // 'canResolve' to print a better error message.
-      if canResolveMethod(arr, "dsiNoFluffView") {
-        return arr.dsiNoFluffView();
-      } else {
-        compilerError("noFluffView is not supported on this array type.");
-      }
-    }
-
 
     //
     // privatization
@@ -252,13 +238,6 @@ module ArrayViewSlice {
     // bulk-transfer
     //
 
-    proc dsiSupportsBulkTransfer() param {
-      return arr.dsiSupportsBulkTransfer();
-    }
-
-    proc dsiSupportsBulkTransferInterface() param
-      return arr.dsiSupportsBulkTransferInterface();
-
     proc _viewHelper(dims) {
       compilerError("viewHelper not supported on ArrayViewSlice.");
     }
@@ -273,46 +252,6 @@ module ArrayViewSlice {
         return {(...dom.dsiDims())};
       }
     }
-
-    // contiguous transfer support
-    proc doiUseBulkTransfer(B) {
-      return arr.doiUseBulkTransfer(B);
-    }
-
-    proc doiCanBulkTransfer(viewDom) {
-      return arr.doiCanBulkTransfer(viewDom);
-    }
-
-    proc doiBulkTransfer(B, viewDom) {
-      arr.doiBulkTransfer(B, viewDom);
-    }
-
-    // strided transfer support
-    proc doiUseBulkTransferStride(B) {
-      return arr.doiUseBulkTransferStride(B);
-    }
-
-    proc doiCanBulkTransferStride(viewDom) {
-      return arr.doiCanBulkTransferStride(viewDom);
-    }
-
-    proc doiBulkTransferStride(B, viewDom) {
-      arr.doiBulkTransferStride(B, viewDom);
-    }
-
-    // distributed transfer support
-    proc doiBulkTransferToDR(B, viewDom) {
-      arr.doiBulkTransferToDR(B, viewDom);
-    }
-
-    proc doiBulkTransferFromDR(B, viewDom) {
-      arr.doiBulkTransferFromDR(B, viewDom);
-    }
-
-    proc doiBulkTransferFrom(B, viewDom) {
-      arr.doiBulkTransferFrom(B, viewDom);
-    }
-
 
     //
     // utility functions used to set up the index cache
@@ -361,6 +300,10 @@ module ArrayViewSlice {
     // not sure what this is, but everyone seems to have one...
     inline proc dsiGetBaseDom() {
       return dom;
+    }
+
+    proc dsiOwnsElements() : bool {
+      return false;
     }
 
     proc _getActualArray() {
