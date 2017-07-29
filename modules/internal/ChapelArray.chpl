@@ -1998,6 +1998,8 @@ module ChapelArray {
       }
     }
 
+    forwarding _value;
+
     inline proc _do_destroy() {
       if ! _unowned {
         on _instance {

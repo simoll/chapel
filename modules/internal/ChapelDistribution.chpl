@@ -658,7 +658,6 @@ module ChapelDistribution {
     // The common case seems to be local access to this class, so we
     // will use explicit processor atomics, even when network
     // atomics are available
-    var _arrAlias: BaseArr;    // reference to base array if an alias
     var pid:int = nullPid; // privatized ID, if privatization is supported
 
     proc isSliceArrayView() param {
@@ -674,6 +673,10 @@ module ChapelDistribution {
     }
 
     proc deinit() {
+    }
+
+    proc dsiOwnsElements() : bool {
+      return true;
     }
 
     proc dsiStaticFastFollowCheck(type leadType) param return false;
@@ -936,7 +939,7 @@ module ChapelDistribution {
   // that arr.eltType is meaningful.
   proc _delete_arr(arr, param privatized:bool) {
     // decide whether or not the array is an alias
-    var isalias = (arr._arrAlias != nil) || chpl__isArrayView(arr);
+    var isalias = !arr.dsiOwnsElements() || chpl__isArrayView(arr);
 
     // array implementation can destroy data or other members
     arr.dsiDestroyArr(isalias);
