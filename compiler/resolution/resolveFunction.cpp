@@ -363,6 +363,9 @@ static void protoIteratorClass(FnSymbol* fn) {
   ii->irecord->iteratorInfo        = ii;
   ii->irecord->scalarPromotionType = fn->retType;
 
+  ii->yieldedType = fn->retType;
+  ii->iteratorRetTag = fn->retTag;
+
   fn->retType = ii->irecord;
   fn->retTag  = RET_VALUE;
 
