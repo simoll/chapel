@@ -26,6 +26,7 @@
 #include "astutil.h"
 #include "driver.h"
 #include "expr.h"
+#include "errorHandling.h"
 #include "files.h"
 #include "optimizations.h"
 #include "resolution.h"
@@ -400,6 +401,7 @@ bundleArgs(CallExpr* fcall, BundleArgsFnData &baData) {
       if (SymExpr* se = toSymExpr(arg)) {
         if (se->symbol()->hasFlag(FLAG_ERROR_VARIABLE)) {
           baData.needsDestroy.push_back(false);
+          i++;
           continue;
         }
       }
@@ -1576,6 +1578,11 @@ void parallel() {
   insertEndCounts();
 
   passArgsToNestedFns();
+
+  // Lower error handling check error primitives
+  // now that callDestructors has had the benefit
+  // of more straightforward error-handling AST.
+  lowerCheckErrorPrimitive();
 }
 
 

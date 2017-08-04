@@ -34,6 +34,7 @@
 #include "stringutil.h"
 #include "symbol.h"
 #include "view.h"
+#include "wellknown.h"
 
 //
 // getTheIteratorFn(): get the original (user-written) iterator function
@@ -498,7 +499,13 @@ replaceIteratorFormalsWithIteratorFields(FnSymbol* iterator, Symbol* ic,
           // count is used to get the nth field out of the iterator class;
           // it is replaced by the field once the iterator class is created
           Expr* stmt = se->getStmtExpr();
+
+          // Error variable arguments should have already been handled.
+          INT_ASSERT(! (formal->defPoint->parentSymbol != se->parentSymbol &&
+                         formal->hasFlag(FLAG_ERROR_VARIABLE)));
+          // TODO -- this should use/respect ArgSymbol's Qualifier
           VarSymbol* tmp = newTemp(formal->name, formal->type);
+
           stmt->insertBefore(new DefExpr(tmp));
           stmt->insertBefore(new CallExpr(PRIM_MOVE, tmp, new CallExpr(PRIM_GET_MEMBER, ic, new_IntSymbol(count))));
           se->setSymbol(tmp);
@@ -1206,13 +1213,18 @@ static void
 expandBodyForIteratorInline(ForLoop*       forLoop,
                             BlockStmt*     ibody,
                             Symbol*        index);
+static void replaceErrorArgumentWithEnclosingError(
+    FnSymbol* iterator,
+    std::vector<BaseAST*>& asts);
+
 
 static void
 expandBodyForIteratorInline(ForLoop*       forLoop,
                             BlockStmt*     ibody,
                             Symbol*        index,
                             bool           inTaskFn,
-                            TaskFnCopyMap& taskFnCopies);
+                            TaskFnCopyMap& taskFnCopies,
+                            bool&          callWithErrorArg);
 
 /// \param call A for loop block primitive.
 static bool
@@ -1290,8 +1302,16 @@ expandIteratorInline(ForLoop* forLoop) {
     // the yielded index for the iterator formal.
     expandBodyForIteratorInline(forLoop, ibody, index);
 
-    collect_asts(ibody, asts);
 
+    if (iterator->throwsError()) {
+      // For an inlined iterator, we don't want to track the error
+      // argument through the iterator class. Instead of setting
+      // a formal error argument, set an enclosing error variable.
+      collect_asts(ibody, asts);
+      replaceErrorArgumentWithEnclosingError(iterator, asts);
+    }
+
+    collect_asts(ibody, asts);
     replaceIteratorFormalsWithIteratorFields(iterator, ic, asts);
 
     // We can return true if forLoop has been removed from the tree.
@@ -1305,8 +1325,9 @@ expandBodyForIteratorInline(ForLoop*       forLoop,
                             BlockStmt*     ibody,
                             Symbol*        index) {
   TaskFnCopyMap taskFnCopies;
-
-  expandBodyForIteratorInline(forLoop, ibody, index, false, taskFnCopies);
+  bool callWithErrorArg = false;
+  expandBodyForIteratorInline(forLoop, ibody, index, false,
+                              taskFnCopies, callWithErrorArg);
 }
 
 /*
@@ -1317,10 +1338,231 @@ expandBodyForIteratorInline(ForLoop*       forLoop,
  These functions help to compensate by discovering any GotoStmt
  that needs to be adjusted.
  */
+
+// For task functions, we need an error argument for
+// parallel to process them correctly, but the error
+// is actually passed through the end-count error list.
+static void
+addDummyErrorArgumentToCall(CallExpr* call)
+{
+  VarSymbol* errorTmp = newTemp("dummy_error", dtError);
+  errorTmp->addFlag(FLAG_ERROR_VARIABLE);
+  call->insertBefore(new DefExpr(errorTmp));
+  call->insertAtTail(errorTmp);
+}
+
+static ArgSymbol*
+findErrorArgumentToFn(FnSymbol* fn)
+{
+  ArgSymbol* errorArg = NULL;
+  if (fn->throwsError()) {
+    for_formals(formal, fn) {
+      // TODO: should his check FLAG_ERROR_VARIABLE?
+      if (formal->type == dtError)
+        errorArg = formal;
+    }
+  }
+  return errorArg;
+}
+
+static ArgSymbol*
+addDummyErrorArgumentToFn(FnSymbol* fn)
+{
+  ArgSymbol* errorArg = new ArgSymbol(INTENT_REF, "error_out", dtError);
+  errorArg->addFlag(FLAG_ERROR_VARIABLE);
+  fn->insertFormalAtTail(errorArg);
+  fn->throwsErrorInit();
+  return errorArg;
+}
+
+static void
+adjustErrorHandlingLoopExits(BlockStmt* body, bool& adjustCaller) {
+  FnSymbol* fn = toFnSymbol(body->parentSymbol);
+  INT_ASSERT(fn);
+
+  std::vector<GotoStmt*> gotos;
+  collectGotoStmts(body, gotos);
+
+  for_vector(GotoStmt, g, gotos) {
+    if (g->gotoTag == GOTO_ERROR_HANDLING) {
+      // Does the target of this Goto exist within the same function?
+      LabelSymbol* target = g->gotoTarget();
+      INT_ASSERT(target->defPoint->parentSymbol);
+      if (target->defPoint->parentSymbol != body->parentSymbol) {
+        // The goto exits the loop, so needs special treatment.
+
+        // Find the function epilogue
+        LabelSymbol* epilogue = fn->getOrCreateEpilogueLabel();
+
+        // Find the formal to store the error
+	// ... find the (last) error argument
+        ArgSymbol* errorArg = findErrorArgumentToFn(fn);
+        if (errorArg == NULL) {
+          errorArg = addDummyErrorArgumentToFn(fn);
+          adjustCaller = true;
+        }
+	INT_ASSERT(errorArg != NULL);
+
+        // Find the PRIM_MOVE setting the error variable
+        CallExpr* prevMoveErr = NULL;
+        Expr* cur = g->prev;
+        while (cur != NULL) {
+          if (CallExpr* call = toCallExpr(cur)) {
+            if (call->isPrimitive(PRIM_MOVE) &&
+                call->get(1)->typeInfo() == dtError) {
+              prevMoveErr = call;
+              break;
+            }
+          }
+          cur = cur->prev;
+        }
+        INT_ASSERT(prevMoveErr);
+        Expr* oldErrorDst = prevMoveErr->get(1);
+        Expr* oldErrorSrc = prevMoveErr->get(2);
+        INT_ASSERT(oldErrorDst->typeInfo() == dtError);
+
+        // Replace it with assign / goto return
+        oldErrorDst->remove();
+        oldErrorSrc->remove();
+        prevMoveErr->replace(new CallExpr(PRIM_ASSIGN, errorArg, oldErrorSrc));
+        GotoStmt* newGoto = new GotoStmt(GOTO_RETURN, epilogue);
+        g->replace(newGoto);
+      }
+    }
+  }
+}
+
+/* Since lowering of error handling constructs happens before
+   iterator inlining, we might have inlined a task construct that
+   didn't appear to throw an error when the iterator was handled
+   in isolation, but that does now throw an error (because the
+   loop body throws). In that event, we need to change the
+   call to gChplUncaughtError to a goto.
+ */
+static void
+propagateErrorInsteadOfHalting(CallExpr* haltCall)
+{
+
+}
+
+static bool
+findFollowingCheckErrorBlock(SymExpr* se, LabelSymbol*& outHandlerLabel,
+    Symbol*& outErrorSymbol) {
+  Expr* stmt = se->getStmtExpr(); // aka last scope
+  Expr* scope = stmt->parentExpr;
+
+  while (scope) {
+    if (isBlockStmt(scope)) {
+      // Consider statements that appear before stmt
+      // We are looking for a DefExpr of an error label
+      for(Expr* cur = stmt->next; cur != NULL; cur = cur->next) {
+        if (DefExpr* def = toDefExpr(cur))
+          if (LabelSymbol* label = toLabelSymbol(def->sym))
+            if (label->hasFlag(FLAG_ERROR_LABEL)) {
+              outHandlerLabel = label;
+              // find the error that this block is working with
+              for(Expr* e = def->next; e != NULL; e = e->next) {
+                std::vector<CallExpr*> calls;
+                collectCallExprs(e, calls);
+                for_vector(CallExpr, call, calls) {
+                  if (call->isPrimitive(PRIM_CHECK_ERROR)) {
+                    SymExpr* se = toSymExpr(call->get(1));
+                    INT_ASSERT(se->symbol()->hasFlag(FLAG_ERROR_VARIABLE));
+                    outErrorSymbol = se->symbol();
+                    return true;
+                  }
+                }
+              }
+              INT_FATAL("Could not find error variable for handler");
+            }
+      }
+    }
+    stmt = scope;
+    scope = scope->parentExpr;
+  }
+
+  return false;
+}
+
+/* When inlining an iterator, the iterator might throw
+   an error. If it does, instead of updating the iterator's
+   out error argument, the error should propagate to
+   a following error-handling block if one exists.
+ */
+static void
+replaceErrorArgumentWithEnclosingError(
+    FnSymbol* iterator,
+    std::vector<BaseAST*>& asts) {
+
+  for_vector(BaseAST, ast, asts) {
+    if (SymExpr* se = toSymExpr(ast)) {
+      Symbol* oldSymbol = se->symbol();
+      if (oldSymbol->defPoint->parentSymbol != se->parentSymbol &&
+          oldSymbol->hasFlag(FLAG_ERROR_VARIABLE)) {
+
+        LabelSymbol* newLabel = NULL;
+        Symbol* newError = NULL;
+
+        // This code is only written to handle a PRIM_MOVE/ASSIGN
+        // that is setting the out error argument of the iterator.
+        // This out error argument is no longer available since the
+        // iterator is being inlined.
+        CallExpr* parentCall = toCallExpr(se->parentExpr);
+        INT_ASSERT(parentCall->isPrimitive(PRIM_MOVE) ||
+                   parentCall->isPrimitive(PRIM_ASSIGN));
+        INT_ASSERT(se == parentCall->get(1));
+
+        FnSymbol* inFn = toFnSymbol(se->parentSymbol);
+
+        // find the Goto we need to replace
+        GotoStmt* fixGoto = NULL;
+        for(Expr* cur = se->getStmtExpr(); cur != NULL; cur = cur->next) {
+          fixGoto = toGotoStmt(cur);
+          if (fixGoto != NULL)
+            break;
+        }
+        INT_ASSERT(fixGoto);
+
+        if (findFollowingCheckErrorBlock(se, newLabel, newError)) {
+          // Adjust the current error handling block.
+          // 1. Change the use of the error argument to use the
+          // identified error variable.
+          // 2. Change the Goto to point to the identified error label.
+
+          se->setSymbol(newError);
+          fixGoto->gotoTag = GOTO_ERROR_HANDLING;
+          fixGoto->label->replace(new SymExpr(newLabel));
+        } else if(isTaskFun(inFn)) {
+          // 1. Make sure that the task function has an error argument.
+          // 2. Set that out argument instead of the invalid one.
+          ArgSymbol* errorArg = findErrorArgumentToFn(inFn);
+          if (errorArg == NULL) {
+            errorArg = addDummyErrorArgumentToFn(inFn);
+            // And adjust callers of this function
+            for_SymbolSymExprs(se, inFn) {
+              CallExpr* call = toCallExpr(se->parentExpr);
+              addDummyErrorArgumentToCall(call);
+            }
+          }
+          se->setSymbol(errorArg);
+          INT_ASSERT(fixGoto->gotoTag == GOTO_RETURN);
+        } else {
+          // Just call gChplUncaughtError
+          VarSymbol* tmp = newTemp("error", dtError);
+          parentCall->insertBefore(new DefExpr(tmp));
+          se->setSymbol(tmp);
+          fixGoto->replace(new CallExpr(gChplUncaughtError, tmp));
+        }
+      }
+    }
+  }
+}
+
+/*
 static LabelSymbol*
 findErrorHandlingLoopExit(ForLoop* forLoop) {
   std::vector<GotoStmt*> gotos;
-  collectGotoStmts(forLoop->body, &gotos);
+  collectGotoStmts(forLoop, gotos);
 
   LabelSymbol* ret = NULL;
 
@@ -1331,14 +1573,14 @@ findErrorHandlingLoopExit(ForLoop* forLoop) {
       Expr* cur = target->defPoint;
       bool inLoop = false;
       while(cur != NULL) {
-        if (cur == forLoop->body || cur == forLoop) {
+        if (cur == forLoop) {
           inLoop = true;
           break;
         }
         cur = cur->parentExpr;
       }
 
-      if (inLoop = false) {
+      if (inLoop == false) {
         // The goto exits the loop, so needs special treatment.
 
         // This code assumes that there is just one label
@@ -1352,29 +1594,41 @@ findErrorHandlingLoopExit(ForLoop* forLoop) {
 
   return ret;
 }
-
-static LabelSymbol*
+*/
+/*static LabelSymbol*
 createErrorHandlingLabelForTaskFn(FnSymbol* fn) {
   LabelSymbol* label = new LabelSymbol("handler");
   LabelSymbol* epilogue = fn->getOrCreateEpilogueLabel();
   DefExpr* labelDef = new DefExpr(label);
-  epilogue->insertBefore(labelDef);
+  epilogue->defPoint->insertBefore(labelDef);
+  // find the (last) error argument
+  ArgSymbol* errorArg = NULL;
+  for_formals(formal, fn) {
+    if (formal->type == dtError)
+      errorArg = formal;
+  }
+  INT_ASSERT(errorArg != NULL);
+  // Set up the body of the conditional
+  BlockStmt* errorPolicy = new BlockStmt();
+
   labelDef->insertAfter(new CondStmt());
 }
+*/
 
 static void
 expandBodyForIteratorInline(ForLoop*       forLoop,
                             BlockStmt*     ibody,
                             Symbol*        index,
                             bool           inTaskFn,
-                            TaskFnCopyMap& taskFnCopies) {
+                            TaskFnCopyMap& taskFnCopies,
+                            bool&          callWithErrorArg) {
   std::vector<BaseAST*> asts;
   bool removeReturn = !inTaskFn;
-  LabelSymbol* ibodyErrorLabel = NULL;
 
   collect_asts(ibody, asts);
 
   for_vector(BaseAST, ast, asts) {
+
     if (CallExpr* call = toCallExpr(ast)) {
       if (call->isPrimitive(PRIM_YIELD)) {
         Symbol*    yieldedIndex  = newTemp("_yieldedIndex", index->type);
@@ -1389,17 +1643,6 @@ expandBodyForIteratorInline(ForLoop*       forLoop,
         }
 
         SymbolMap  map;
-
-        // Handle an error-handling goto that needs special
-        // treatment to go in to a task function.
-
-        if (inTaskFn)
-          if (LabelSymbol* label = findErrorHandlingLoopExit(forLoop)) {
-            if (ibodyErrorLabel == NULL) {
-              ibodyErrorLabel = new LabelSymbol("handler"
-            }
-            map.put(label, ibodyErrorLabel);
-          }
 
         map.put(index, yieldedIndex);
 
@@ -1434,19 +1677,15 @@ expandBodyForIteratorInline(ForLoop*       forLoop,
           bodyCopy->insertBefore(new DefExpr(yieldedIndex));
           bodyCopy->insertBefore(new CallExpr(PRIM_MOVE, yieldedIndex, call->get(1)));
         }
-        
-        // Adjust error handling gotos
 
-        // TODO -- somewhere in here, change goto error handling in
-        // task function 
-        // to set out error argument in task function and
-        // goto the function epilogue
-
+        // Handle an error-handling goto that needs special
+        // treatment to go in to a task function.
+        if (inTaskFn)
+          adjustErrorHandlingLoopExits(bodyCopy, callWithErrorArg);
 
       }
 
       if (call->isPrimitive(PRIM_RETURN)) {
-        INT_FATAL("PRIM_RETURN removed earlier?");
         if (removeReturn)
           call->remove();
       }
@@ -1460,6 +1699,7 @@ expandBodyForIteratorInline(ForLoop*       forLoop,
         // while preserving correct scoping of its SymExprs.
         INT_ASSERT(isGlobal(cfn));
 
+        bool subCallWithErrorArg = false;
         FnSymbol* fcopy = taskFnCopies.get(cfn);
 
         if (!fcopy) {
@@ -1478,7 +1718,8 @@ expandBodyForIteratorInline(ForLoop*       forLoop,
           taskFnCopies.put(cfn, fcopy);
 
           // Repeat, recursively.
-          expandBodyForIteratorInline(forLoop, fcopy->body, index, true, taskFnCopies);
+          expandBodyForIteratorInline(forLoop, fcopy->body, index, true,
+              taskFnCopies, subCallWithErrorArg);
 
         } else {
           // Indeed, 'cfn' is encountered only once per 'body',
@@ -1494,12 +1735,24 @@ expandBodyForIteratorInline(ForLoop*       forLoop,
         // Call 'fcopy' instead
         call->baseExpr->replace(new SymExpr(fcopy));
 
+        if (subCallWithErrorArg) {
+          addDummyErrorArgumentToCall(call);
+          callWithErrorArg = true;
+        }
+
         // Note: this is an expensive operation due to compute_call_sites().
         // We do it because it may eliminate further cloning of 'fcopy'
         // e.g. when the enclosing fn or block are copied for any reason.
         // Ideally, replace with flattenOneFunction().
         flattenNestedFunction(fcopy);
       }
+
+      // If the loop body can throw an error, the
+      // code copied from the iterator now needs to throw an error instead
+      // of halting.
+      if (FnSymbol* calledFn = call->resolvedFunction())
+        if (callWithErrorArg && calledFn == gChplUncaughtError)
+          propagateErrorInsteadOfHalting(call);
     }
   }
 }
