@@ -1211,7 +1211,7 @@ static void
 expandBodyForIteratorInline(ForLoop*       forLoop,
                             BlockStmt*     ibody,
                             Symbol*        index,
-                            bool           removeReturn,
+                            bool           inTaskFn,
                             TaskFnCopyMap& taskFnCopies);
 
 /// \param call A for loop block primitive.
@@ -1306,16 +1306,71 @@ expandBodyForIteratorInline(ForLoop*       forLoop,
                             Symbol*        index) {
   TaskFnCopyMap taskFnCopies;
 
-  expandBodyForIteratorInline(forLoop, ibody, index, true, taskFnCopies);
+  expandBodyForIteratorInline(forLoop, ibody, index, false, taskFnCopies);
+}
+
+/*
+ A Goto ErrorHandling label in the body of an loop will not
+ be properly handled when the iterator is inlined into a task
+ function because the label will be outside of the task function.
+
+ These functions help to compensate by discovering any GotoStmt
+ that needs to be adjusted.
+ */
+static LabelSymbol*
+findErrorHandlingLoopExit(ForLoop* forLoop) {
+  std::vector<GotoStmt*> gotos;
+  collectGotoStmts(forLoop->body, &gotos);
+
+  LabelSymbol* ret = NULL;
+
+  for_vector(GotoStmt, g, gotos) {
+    if (g->gotoTag == GOTO_ERROR_HANDLING) {
+      // Does the target of this Goto exist within the forLoop?
+      LabelSymbol* target = g->gotoTarget();
+      Expr* cur = target->defPoint;
+      bool inLoop = false;
+      while(cur != NULL) {
+        if (cur == forLoop->body || cur == forLoop) {
+          inLoop = true;
+          break;
+        }
+        cur = cur->parentExpr;
+      }
+
+      if (inLoop = false) {
+        // The goto exits the loop, so needs special treatment.
+
+        // This code assumes that there is just one label
+        // for the loop's error exits
+        INT_ASSERT(ret == NULL);
+
+        ret = target;
+      }
+    }
+  }
+
+  return ret;
+}
+
+static LabelSymbol*
+createErrorHandlingLabelForTaskFn(FnSymbol* fn) {
+  LabelSymbol* label = new LabelSymbol("handler");
+  LabelSymbol* epilogue = fn->getOrCreateEpilogueLabel();
+  DefExpr* labelDef = new DefExpr(label);
+  epilogue->insertBefore(labelDef);
+  labelDef->insertAfter(new CondStmt());
 }
 
 static void
 expandBodyForIteratorInline(ForLoop*       forLoop,
                             BlockStmt*     ibody,
                             Symbol*        index,
-                            bool           removeReturn,
+                            bool           inTaskFn,
                             TaskFnCopyMap& taskFnCopies) {
   std::vector<BaseAST*> asts;
+  bool removeReturn = !inTaskFn;
+  LabelSymbol* ibodyErrorLabel = NULL;
 
   collect_asts(ibody, asts);
 
@@ -1334,6 +1389,17 @@ expandBodyForIteratorInline(ForLoop*       forLoop,
         }
 
         SymbolMap  map;
+
+        // Handle an error-handling goto that needs special
+        // treatment to go in to a task function.
+
+        if (inTaskFn)
+          if (LabelSymbol* label = findErrorHandlingLoopExit(forLoop)) {
+            if (ibodyErrorLabel == NULL) {
+              ibodyErrorLabel = new LabelSymbol("handler"
+            }
+            map.put(label, ibodyErrorLabel);
+          }
 
         map.put(index, yieldedIndex);
 
@@ -1368,9 +1434,19 @@ expandBodyForIteratorInline(ForLoop*       forLoop,
           bodyCopy->insertBefore(new DefExpr(yieldedIndex));
           bodyCopy->insertBefore(new CallExpr(PRIM_MOVE, yieldedIndex, call->get(1)));
         }
+        
+        // Adjust error handling gotos
+
+        // TODO -- somewhere in here, change goto error handling in
+        // task function 
+        // to set out error argument in task function and
+        // goto the function epilogue
+
+
       }
 
       if (call->isPrimitive(PRIM_RETURN)) {
+        INT_FATAL("PRIM_RETURN removed earlier?");
         if (removeReturn)
           call->remove();
       }
@@ -1402,7 +1478,7 @@ expandBodyForIteratorInline(ForLoop*       forLoop,
           taskFnCopies.put(cfn, fcopy);
 
           // Repeat, recursively.
-          expandBodyForIteratorInline(forLoop, fcopy->body, index, false, taskFnCopies);
+          expandBodyForIteratorInline(forLoop, fcopy->body, index, true, taskFnCopies);
 
         } else {
           // Indeed, 'cfn' is encountered only once per 'body',
