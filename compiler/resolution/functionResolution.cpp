@@ -1186,6 +1186,18 @@ static bool fits_in_uint(int width, Immediate* imm) {
   return false;
 }
 
+static bool fits_in_mantissa(int width, Immediate* imm) {
+  // is it between -2**width .. 2**width, inclusive?
+  int64_t p = 1;
+  p <<= width; // now p is 2**width
+
+  if (imm->const_kind == NUM_KIND_INT && imm->num_index == INT_SIZE_DEFAULT) {
+    int64_t i = imm->int_value();
+    return -p <= i && i <= p;
+  }
+
+  return false;
+}
 
 void ensureEnumTypeResolved(EnumType* etype) {
   INT_ASSERT( etype != NULL );
@@ -1384,6 +1396,51 @@ static bool canParamCoerce(Type* actualType, Symbol* actualSym, Type* formalType
         if (fits_in_uint(get_width(formalType), var->immediate))
           return true;
   }
+  // coerce fully representable integers into real / real part of complex
+  if (is_real_type(formalType)) {
+    if (is_bool_type(actualType))
+      return true;
+    if (is_int_type(actualType) &&
+        get_width(actualType) < get_mantissa_width(formalType))
+      return true;
+    if (is_uint_type(actualType) &&
+        get_width(actualType) < get_mantissa_width(formalType))
+      return true;
+//    if (is_real_type(actualType) &&
+//        get_width(actualType) < get_width(formalType))
+//      return true;
+    if (VarSymbol* var = toVarSymbol(actualSym))
+      if (var->immediate)
+        if (fits_in_mantissa(get_mantissa_width(formalType), var->immediate))
+          return true;
+  }
+  /*
+  if (is_complex_type(formalType)) {
+    if (is_bool_type(actualType))
+      return true;
+    if (is_int_type(actualType) &&
+        get_width(actualType) < get_mantissa_width(formalType))
+      return true;
+    if (is_uint_type(actualType) &&
+        get_width(actualType) < get_mantissa_width(formalType))
+      return true;
+    if (is_real_type(actualType) &&
+        get_width(actualType) < get_width(formalType)/2)
+      return true;
+    if (is_imag_type(actualType) &&
+        get_width(actualType) < get_width(formalType)/2)
+      return true;
+    if (is_complex_type(actualType) &&
+        (get_width(actualType) < get_width(formalType)))
+      return true;
+    if (VarSymbol* var = toVarSymbol(actualSym))
+      if (var->immediate)
+        if (fits_in_mantissa(get_mantissa_width(formalType), var->immediate))
+          return true;
+  }*/
+
+
+
   // param strings can coerce between string and c_string
   if ((formalType == dtString || formalType == dtStringC) &&
       (actualType == dtString || actualType == dtStringC))
@@ -1474,6 +1531,8 @@ bool canCoerce(Type*     actualType,
     if ((is_int_type(actualType) || is_uint_type(actualType))
         && get_width(formalType) >= 64)
       return true;
+
+      // TODO - move to canParamCoerce
     if (is_real_type(actualType) &&
         get_width(actualType) < get_width(formalType))
       return true;
@@ -1484,6 +1543,7 @@ bool canCoerce(Type*     actualType,
         && get_width(formalType) >= 128)
       return true;
 
+    // TODO - move to canParamCoerce
     if (is_real_type(actualType) &&
         (get_width(actualType) <= get_width(formalType)/2))
       return true;
@@ -1985,6 +2045,13 @@ static bool considerParamMatches(Type* actualType,
                                   arg2Type);
     }
 
+    // have int/uint cast to default-size real over a smaller size or complex
+    if (is_int_type(actualType) || is_uint_type(actualType)) {
+      return considerParamMatches(dtReal[FLOAT_SIZE_DEFAULT],
+                                  arg1Type,
+                                  arg2Type);
+    }
+
     if (is_enum_type(actualType)) {
       return considerParamMatches(dtInt[INT_SIZE_DEFAULT],
                                   arg1Type,
@@ -2105,6 +2172,8 @@ static void testArgMapping(FnSymbol* fn1, ArgSymbol* formal1,
     TRACE_DISAMBIGUATE_BY_MATCH("H: Fn %d is more specific\n", DC.j);
     DS.fn2MoreSpecific = true;
 
+    // What's gonig on in considerParamMatches?
+    // Brad's PR #5923
   } else if (considerParamMatches(actualType, f1Type, f2Type)) {
     TRACE_DISAMBIGUATE_BY_MATCH("In first param case\n");
     // The actual matches formal1's type, but not formal2's
@@ -2161,6 +2230,16 @@ static void testArgMapping(FnSymbol* fn1, ArgSymbol* formal1,
 
   } else if (is_int_type(f2Type) && is_uint_type(f1Type)) {
     TRACE_DISAMBIGUATE_BY_MATCH("N: Fn %d is more specific\n", DC.j);
+    DS.fn2MoreSpecific = true;
+
+  } else if ((is_int_type(f1Type) || is_uint_type(f1Type)) &&
+              is_real_type(f2Type)) {
+    TRACE_DISAMBIGUATE_BY_MATCH("N1: Fn %d is more specific\n", DC.i);
+    DS.fn1MoreSpecific = true;
+
+  } else if ((is_int_type(f2Type) || is_uint_type(f2Type)) &&
+              is_real_type(f1Type)) {
+    TRACE_DISAMBIGUATE_BY_MATCH("N2: Fn %d is more specific\n", DC.j);
     DS.fn2MoreSpecific = true;
 
   } else {
