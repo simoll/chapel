@@ -1191,6 +1191,17 @@ void prepareCodegenLLVM()
   info->FPM_postgen = fpm;
 
   info->FPM_postgen->doInitialization();
+
+  if(ffloatOpt == 1)
+  {
+    llvm::FastMathFlags FM;
+    FM.setNoNaNs();
+    FM.setNoInfs();
+    FM.setNoSignedZeros();
+    FM.setAllowReciprocal();
+    FM.setUnsafeAlgebra();
+    info->builder->setFastMathFlags(FM);
+  }
 }
 
 #if HAVE_LLVM_VER >= 33
@@ -1323,6 +1334,11 @@ void runClang(const char* just_parse_filename) {
         }
       }
     }
+
+    // Include header containing libc wrappers
+    clangOtherArgs.push_back("-include");
+    clangOtherArgs.push_back("llvm/chapel_libc_wrapper.h");
+
     // Include extern C blocks
     if( externC && gAllExternCode.filename ) {
       clangOtherArgs.push_back("-include");
@@ -2218,7 +2234,10 @@ void makeBinaryLLVM(void) {
   options += " ";
   options += ldflags;
 
-  options += " -pthread";
+  // We may need to add the -pthread flag here for the link step
+  // if we start doing link-time optimization.  For now, leave it
+  // out because its unnecessary inclusion causes a warning message
+  // on Macs.
 
   // Now, if we're doing a multilocale build, we have to make a launcher.
   // For this reason, we create a makefile. codegen_makefile

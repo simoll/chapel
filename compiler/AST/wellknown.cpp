@@ -40,6 +40,8 @@ AggregateType* dtTuple;
 // The well-known functions
 FnSymbol *gChplHereAlloc;
 FnSymbol *gChplHereFree;
+FnSymbol *gChplDecRunningTask;
+FnSymbol *gChplIncRunningTask;
 FnSymbol *gChplDoDirectExecuteOn;
 FnSymbol *gBuildTupleType;
 FnSymbol *gBuildTupleTypeNoRef;
@@ -49,7 +51,11 @@ FnSymbol *gChplDeleteError;
 FnSymbol *gPrintModuleInitFn;
 FnSymbol *gGetDynamicEndCount;
 FnSymbol *gSetDynamicEndCount;
-
+FnSymbol *gChplUncaughtError;
+FnSymbol *gChplPropagateError;
+FnSymbol *gSaveTaskErrorFn;
+FnSymbol *gSaveLineInErrorFn;
+FnSymbol *gChplForallError;
 
 /************************************* | **************************************
 *                                                                             *
@@ -190,6 +196,18 @@ static WellKnownFn sWellKnownFns[] = {
   },
 
   {
+    "chpl_taskRunningCntInc",
+    &gChplIncRunningTask,
+    FLAG_INC_RUNNING_TASK
+  },
+
+  {
+    "chpl_taskRunningCntDec",
+    &gChplDecRunningTask,
+    FLAG_DEC_RUNNING_TASK
+  },
+
+  {
     "chpl_doDirectExecuteOn",
     &gChplDoDirectExecuteOn,
     FLAG_UNKNOWN
@@ -240,6 +258,36 @@ static WellKnownFn sWellKnownFns[] = {
   {
     "chpl_task_setDynamicEndCount",
     &gSetDynamicEndCount,
+    FLAG_UNKNOWN
+  },
+
+  {
+    "chpl_uncaught_error",
+    &gChplUncaughtError,
+    FLAG_UNKNOWN
+  },
+
+  {
+    "chpl_propagate_error",
+    &gChplPropagateError,
+    FLAG_UNKNOWN
+  },
+
+  {
+    "chpl_save_task_error",
+    &gSaveTaskErrorFn,
+    FLAG_UNKNOWN
+  },
+
+  {
+    "chpl_save_line_in_error",
+    &gSaveLineInErrorFn,
+    FLAG_UNKNOWN
+  },
+
+  {
+    "chpl_forall_error",
+    &gChplForallError,
     FLAG_UNKNOWN
   },
 

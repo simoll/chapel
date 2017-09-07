@@ -52,7 +52,7 @@ Parser module with the Toml class for the Chapel TOML library.
 
    use Regexp;
    use DateTime;
-   use OwnedObject;
+
 
    /* Prints a line by line output of parsing process */
    config const debugTomlParser: bool = false;
@@ -225,10 +225,7 @@ Parser module with the Toml class for the Chapel TOML library.
            }
            else {
              var toParse = parseValue();
-             // Temporary work-around for push_back(Owned(C))
-             //     See #6841 for more info
-             Dom = {Dom.low..Dom.high+1};
-             array[Dom.high] = toParse;
+	     array.push_back(toParse);
            }
          }
          skipNext(source);
@@ -295,7 +292,7 @@ Parser module with the Toml class for the Chapel TOML library.
        else if corner.match(val) {
          var token = getToken(source);
          var value =  token.strip(bracket);
-         var toAdd = ['[', value, ']'];
+         var toAdd = [']', value, '['];
          addToken(source, toAdd);
          return parseValue();
        }
@@ -369,7 +366,7 @@ Parser module with the Toml class for the Chapel TOML library.
 
  /*
  Class to hold various types parsed from input
- Used to recursivly hold tables and respective values
+ Used to recursively hold tables and respective values
  */
    class Toml {
 
@@ -434,6 +431,20 @@ Parser module with the Toml class for the Chapel TOML library.
        this.tag = fieldArr;
      }
 
+     // Clone
+     proc init(root: Toml) {
+       this.boo = root.boo;
+       this.i = root.i;
+       this.re = root.re;
+       this.dom = root.dom;
+       for idx in root.dom do this.arr[idx] = new Toml(root.arr[idx]);
+       this.dt = root.dt;
+       this.s = root.s;
+       this.D = root.D;
+       for idx in root.D do this.A[idx] = new Toml(root.A[idx]);
+       this.tag = root.tag;
+     }
+
 
      /* Returns the index of the table path given as a parameter */
      proc this(tbl: string) ref : Toml {
@@ -483,7 +494,7 @@ Parser module with the Toml class for the Chapel TOML library.
        var flat: [flatDom] Toml;
        this.flatten(flat);       // Flattens containing Toml
        printValues(f, this);     // Prints key values in containing Toml
-       printHelp(flat, f);       // Prints tables in containg Toml
+       printHelp(flat, f);       // Prints tables in containing Toml
      }
 
      pragma "no doc"
@@ -502,9 +513,14 @@ Parser module with the Toml class for the Chapel TOML library.
 
      pragma "no doc"
      proc printHelp(flat: [?d] Toml, f:channel) {
+       if d.member('root') {
+	 f.writeln('[root]');
+	 printValues(f, flat['root']);
+	 d.remove('root');
+       }
        for k in d.sorted() {
-         f.writeln('[', k, ']');
-         printValues(f, flat[k]);
+	 f.writeln('[', k, ']');
+	 printValues(f, flat[k]);
        }
      }
 
@@ -609,18 +625,19 @@ pragma "no doc"
  */
  module TomlReader {
 
-   use OwnedObject;
-   use Regexp;
+  use Regexp;
 
    /* Returns the next token in the current line without removing it */
    proc top(source) {
-     if source.currentLine.isEmpty() {
-       source.newLine();
+     if source.nextLine() {
+       return source.currentLine[source.currentLine.D.first];
      }
-     return source.currentLine[source.currentLine.D.first];
+     else {
+       halt("Reached end of file");
+     }
    }
 
-   /* Returns a boolean or wether or not another line can be read
+   /* Returns a boolean or whether or not another line can be read
    /  Also updates the currentLine if empty */
    proc readLine(source) {
      return source.nextLine();
@@ -631,15 +648,21 @@ pragma "no doc"
    }
 
    proc addToken(source, tokensToAdd: [?dom] string) {
-     var tokens = new Owned(new Tokens(tokensToAdd));
-     source.currentLine = tokens;
+     for toke in tokensToAdd {
+       source.currentLine.addToke(toke);
+     }
    }
 
    proc skipLine(source) {
-     source.skipROL();
+     var emptyArray: [1..0] string;
+     var emptyCurrent = new Tokens(emptyArray);
+     var ptrhold = source.currentLine;
+     source.currentLine = emptyCurrent;
+     var readNextLine = readLine(source);
+     delete ptrhold;
    }
 
-   /* retrives the next token in currentline */
+   /* retrieves the next token in currentLine */
    proc getToken(source) {
      return source.nextToke();
    }
@@ -649,8 +672,8 @@ pragma "no doc"
 
      var tomlStr: string;
      var tokenD = {1..0},
-       tokenlist: [tokenD] Owned(Tokens);
-     var currentLine: Owned(Tokens);
+       tokenlist: [tokenD] Tokens;
+     var currentLine: Tokens;
 
 
      proc init(tomlStr: string) {
@@ -691,53 +714,39 @@ pragma "no doc"
            linetokens.push_back(strippedToken);}
        }
        if !linetokens.isEmpty() {
-         var tokens = new Owned(new Tokens(linetokens));
-         // Temporary work-around for push_back(Owned(C))
-         //     See #6841 for more info
-         tokenD = {tokenD.low..tokenD.high+1};
-         tokenlist[tokenD.high] = tokens;
+         var tokens = new Tokens(linetokens);
+         tokenlist.push_back(tokens);
        }
      }
 
 
-     proc newLine() {
-       if nextLine() {
-         if currentLine.isEmpty() {
-           tokenlist.remove(tokenD.first);
-           currentLine = tokenlist[tokenD.first];}
-       }
-       else {
-         halt("Error: unexpectedly reached end of file");
-       }
-     }
-
-     /* Reads next line into currentline */
      proc nextLine() {
        if currentLine.isEmpty() {
          if tokenD.size == 1 {
-           return false;
+	   return false;
          }
          else {
-           tokenlist.remove(tokenD.first);
+	   var ptrhold = currentLine;
+	   tokenlist.remove(tokenD.first);
            currentLine = tokenlist[tokenD.first];
-           return true;
+	   delete ptrhold;
+	   return true;
          }
        }
        return true;
      }
 
 
-     /* retrives next token in currentLine */
+     /* retrieves next token in currentLine */
      proc nextToke() {
-       newLine();
-       return currentLine.next();
-     }
-
-     proc skipROL() {
-       for token in currentLine {
-         currentLine.skip();
+       if nextLine() {
+	 return currentLine.next();
+       }
+       else {
+	 halt("Reached end of file");
        }
      }
+
 
      proc debug() {
        var lineCounter: int = 1;
@@ -750,6 +759,13 @@ pragma "no doc"
          writeln();
        }
      }
+
+
+     proc deinit() {
+       for token in tokenlist {
+	 delete token;
+       }
+      }
    }
 
 
@@ -764,7 +780,7 @@ pragma "no doc"
      }
 
      proc skip() {
-       var idx =  D.first;
+       var idx = D.first;
        var toke = A(idx);
        A.remove(idx);
      }
@@ -774,6 +790,10 @@ pragma "no doc"
        var toke = A(idx);
        A.remove(idx);
        return toke;
+     }
+
+     proc addToke(toke: string) {
+       A.push_front(toke);
      }
 
      proc isEmpty(): bool {

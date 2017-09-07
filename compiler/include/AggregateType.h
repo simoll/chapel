@@ -79,8 +79,13 @@ public:
   bool                        setNextGenericField();
 
   AggregateType*              getInstantiation(Symbol* sym, int index);
+  AggregateType*              getInstantiationParent(AggregateType* parentType);
+
   AggregateType*              getInstantiationMulti(SymbolMap& subs,
                                                     FnSymbol* fn);
+
+  bool                        isInstantiatedFrom(const AggregateType* base)
+                                                                         const;
 
   const char*                 classStructName(bool standalone);
 
@@ -119,6 +124,7 @@ public:
                               // It provides initial values for the
                               // fields in an aggregate type.
   bool                        wantsDefaultInitializer();
+  void                        buildDefaultInitializer();
 
   AggregateType*              instantiatedFrom;
 
@@ -167,6 +173,12 @@ private:
   void                        buildConstructor();
   bool                        needsConstructor();
   void                        moveConstructorToOuter(FnSymbol* fn);
+
+  void                        fieldToArg(FnSymbol*              fn,
+                                         std::set<const char*>& names,
+                                         SymbolMap&             fieldArgMap);
+  bool                        addSuperArgs(FnSymbol*                    fn,
+                                           const std::set<const char*>& names);
 
   std::vector<AggregateType*> instantiations;
 

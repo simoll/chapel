@@ -21,7 +21,9 @@
 
 #include "addAutoDestroyCalls.h"
 #include "astutil.h"
+#include "errorHandling.h"
 #include "expr.h"
+#include "postFold.h"
 #include "resolution.h"
 #include "resolveIntents.h"
 #include "stlUtil.h"
@@ -176,10 +178,6 @@ FnSymbol* ReturnByRef::theTransformableFunction(CallExpr* call)
 
   return (theCall && isTransformableFunction(theCall)) ? theCall : NULL;
 }
-
-//
-// In this first effort, only functions that return strings
-//
 
 bool ReturnByRef::isTransformableFunction(FnSymbol* fn)
 {
@@ -364,17 +362,13 @@ void ReturnByRef::updateAssignmentsFromRefTypeToValue(FnSymbol* fn)
       if (symLhs && callRhs && callRhs->isPrimitive(PRIM_DEREF))
       {
         VarSymbol* varLhs = toVarSymbol(symLhs->symbol());
-        SymExpr*   symRhs = toSymExpr(callRhs->get(1));
-        VarSymbol* varRhs = toVarSymbol(symRhs->symbol());
+        SymExpr*  exprRhs = toSymExpr(callRhs->get(1));
+        Symbol*    symRhs = exprRhs->symbol();
 
-        // MPF 2016-10-02: It seems to me that this code should also handle the
-        // case that symRhs is an ArgSymbol, but adding that caused problems
-        // in the handling of out argument intents.
-
-        if (varLhs != NULL && varRhs != NULL)
+        if (varLhs != NULL && symRhs != NULL)
         {
-          if (isUserDefinedRecord(varLhs->type) == true &&
-              varRhs->type                      == varLhs->type->refType)
+          INT_ASSERT(varLhs->isRef() == false && symRhs->isRef());
+          if (isUserDefinedRecord(varLhs->type) == true)
           {
 
             // HARSHBARGER 2015-12-11:
@@ -579,6 +573,12 @@ void ReturnByRef::transformMove(CallExpr* moveExpr)
   FnSymbol* fn        = callExpr->resolvedFunction();
 
   Expr*     nextExpr  = moveExpr->next;
+
+  // Ignore a CondStmt containing a PRIM_CHECK_ERROR
+  // so that we can still detect initCopy after a call that can throw
+  if (isCheckErrorStmt(nextExpr))
+      nextExpr = nextExpr->next;
+
   CallExpr* copyExpr  = NULL;
 
   Symbol*   useLhs    = toSymExpr(lhs)->symbol();
@@ -981,19 +981,23 @@ changeRetToArgAndClone(CallExpr* move,
 }
 
 
-static void
-returnRecordsByReferenceArguments() {
+static void returnRecordsByReferenceArguments() {
   forv_Vec(CallExpr, call, gCallExprs) {
-    if (call->parentSymbol) {
-      if (FnSymbol* fn = requiresImplicitDestroy(call)) {
-        if (fn->hasFlag(FLAG_EXTERN))
-          continue;
-        CallExpr* move = toCallExpr(call->parentExpr);
-        INT_ASSERT(move->isPrimitive(PRIM_MOVE) ||
-                   move->isPrimitive(PRIM_ASSIGN));
-        SymExpr* lhs = toSymExpr(move->get(1));
-        INT_ASSERT(!lhs->symbol()->hasFlag(FLAG_TYPE_VARIABLE));
-        changeRetToArgAndClone(move, lhs->symbol(), call, fn);
+    if (call->parentSymbol != NULL) {
+      if (requiresImplicitDestroy(call) == true) {
+        FnSymbol* fn = call->resolvedFunction();
+
+        if (fn->hasFlag(FLAG_EXTERN) == false) {
+          CallExpr* move = toCallExpr(call->parentExpr);
+          SymExpr*  lhs  = toSymExpr(move->get(1));
+
+          INT_ASSERT(move->isPrimitive(PRIM_MOVE)   == true||
+                     move->isPrimitive(PRIM_ASSIGN) == true);
+
+          INT_ASSERT(lhs->symbol()->hasFlag(FLAG_TYPE_VARIABLE) == false);
+
+          changeRetToArgAndClone(move, lhs->symbol(), call, fn);
+        }
       }
     }
   }
@@ -1248,11 +1252,14 @@ static void insertAutoCopyTemps() {
       // but it is currently being run. See the comment near the call
       // to requiresImplicitDestroy in functionResolution and the test
       // call-expr-tmp.chpl.
+      Expr* moveOrCheckError = move;
+      if (isCheckErrorStmt(move->next))
+        moveOrCheckError = move->next;
 
       Symbol* tmp = newTemp("_autoCopy_tmp_", sym->type);
 
       move->insertBefore(new DefExpr(tmp));
-      move->insertAfter(new CallExpr(PRIM_MOVE,
+      moveOrCheckError->insertAfter(new CallExpr(PRIM_MOVE,
                                      sym,
                                      new CallExpr(getAutoCopyForType(sym->type),
                                                   tmp)));

@@ -101,6 +101,9 @@ private:
 
   DefExpr*        firstField(FnSymbol* fn)                               const;
 
+  bool            isOuterField(DefExpr* field)                           const;
+  void            makeOuterArg();
+
   void            genericFieldInitTypeWoutInit(Expr*    insertBefore,
                                                DefExpr* field)           const;
 
@@ -147,6 +150,8 @@ private:
   DefExpr*        toSuperField(AggregateType* at, const char* name)      const;
   DefExpr*        toSuperField(AggregateType* at, SymExpr*    expr)      const;
   DefExpr*        toSuperField(AggregateType* at, CallExpr*   expr)      const;
+
+  void            transformSuperInit(Expr* initStmt);
 
   const char*     phaseToString(InitPhase phase)                         const;
 

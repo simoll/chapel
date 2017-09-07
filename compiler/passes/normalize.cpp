@@ -118,6 +118,8 @@ static void add_to_where_clause(ArgSymbol* formal,
                                 Expr*      expr,
                                 CallExpr*  query);
 
+static TypeSymbol* expandTypeAlias(SymExpr* se);
+
 /************************************* | **************************************
 *                                                                             *
 *                                                                             *
@@ -810,7 +812,7 @@ static void processSyntacticDistributions(CallExpr* call) {
   if (call->isNamed("chpl__distributed")) {
     if (CallExpr* distCall = toCallExpr(call->get(1))) {
       if (SymExpr* distClass = toSymExpr(distCall->baseExpr)) {
-        if (TypeSymbol* ts = toTypeSymbol(distClass->symbol())) {
+        if (TypeSymbol* ts = expandTypeAlias(distClass)) {
           if (isDistClass(ts->type) == true) {
             CallExpr* newExpr = new CallExpr(PRIM_NEW, distCall->remove());
 
@@ -1035,84 +1037,6 @@ static void insertRetMove(FnSymbol* fn, VarSymbol* retval, CallExpr* ret) {
 
 /************************************* | **************************************
 *                                                                             *
-* If se is a type alias, resolves it recursively, or fails and returns NULL.  *
-*                                                                             *
-************************************** | *************************************/
-
-static TypeSymbol* resolveTypeAlias(SymExpr* se) {
-  TypeSymbol* retval = NULL;
-
-  while (se != NULL && retval == NULL) {
-    Symbol* sym = se->symbol();
-
-    if (TypeSymbol* ts = toTypeSymbol(sym)) {
-      retval = ts;
-
-    } else if (VarSymbol* vs = toVarSymbol(sym)) {
-      if (vs->isType() == true) {
-        // The definition in the init field of its declaration.
-        DefExpr* def = vs->defPoint;
-
-        se = toSymExpr(def->init);
-
-      } else {
-        se = NULL;
-      }
-
-    } else {
-      se = NULL;
-    }
-  }
-
-  return retval;
-}
-
-//
-// These helpers handle RiSpec (Reduce Intent Specification) i.e.:
-//
-//   forall ... with (<RiSpec> reduce <outer variable>) { ... }
-//
-// In particular, they implement RiSpecs of the form type(someArg).
-// See e.g. test/parallel/forall/vass/3types-*.
-// We want to keep these reduce intents in their original form
-// until we process reduce intents later.
-//
-// We do it here to avoid transforming it into _type_construct_C ( ... ).
-// That would be incorrect because this is a special syntax for reduce intent.
-//
-static SymExpr* callUsedInRiSpec(Expr* call, CallExpr* parent) {
-  if (parent && parent->isPrimitive(PRIM_MOVE)) {
-    SymExpr* destSE = toSymExpr(parent->get(1));
-    Symbol* dest = destSE->symbol();
-    SymExpr* riSpecMaybe = dest->firstSymExpr();
-    if (ForallIntent* fi = toForallIntent(riSpecMaybe->parentExpr))
-      if (riSpecMaybe == fi->reduceExpr())
-        return riSpecMaybe;
-  }
-  return NULL;
-}
-//
-// This function partially un-does normalization
-// so that reduce intents specs (see above) don't get messed up.
-//
-static void restoreReduceIntentSpecCall(SymExpr* riSpec, CallExpr* call) {
-  Symbol* temp = riSpec->symbol();
-  // Verify the pattern that occurs if callUsedInRiSpec() returns true.
-  // If any of these fail, either the pattern changed or callUsedInRiSpec()
-  // returns true when it shouldn't.
-  INT_ASSERT(temp->firstSymExpr() == riSpec); // see callUsedInRiSpec
-  INT_ASSERT(temp->lastSymExpr()->next == call); // 'move'
-  // 'temp' has only 2 SymExprs
-  INT_ASSERT(riSpec->symbolSymExprsNext == temp->lastSymExpr());
-  // Remove 'temp'.
-  temp->defPoint->remove();
-  call->parentExpr->remove();
-  // Put 'call' back into riSpec.
-  riSpec->replace(call->remove());
-}
-
-/************************************* | **************************************
-*                                                                             *
 * Normalize constructor/type constructor calls.                               *
 *   a call whose base expression is a symbol referring to an aggregate type   *
 *   is converted to a call to the default type constructor for that class,    *
@@ -1127,6 +1051,9 @@ static void restoreReduceIntentSpecCall(SymExpr* riSpec, CallExpr* call) {
 *                                                                             *
 ************************************** | *************************************/
 
+static SymExpr* callUsedInRiSpec(Expr* call, CallExpr* parent);
+static void     restoreReduceIntentSpecCall(SymExpr* riSpec, CallExpr* call);
+
 static void callConstructor(CallExpr* call) {
   if (SymExpr* se = toSymExpr(call->baseExpr)) {
     SET_LINENO(call);
@@ -1140,7 +1067,7 @@ static void callConstructor(CallExpr* call) {
       parentParent = toCallExpr(parent->parentExpr);
     }
 
-    if (TypeSymbol* ts = resolveTypeAlias(se)) {
+    if (TypeSymbol* ts = expandTypeAlias(se)) {
       at = toAggregateType(ts->type);
     }
 
@@ -1222,6 +1149,62 @@ static void callConstructor(CallExpr* call) {
       }
     }
   }
+}
+
+//
+// These helpers handle RiSpec (Reduce Intent Specification) i.e.:
+//
+//   forall ... with (<RiSpec> reduce <outer variable>) { ... }
+//
+// In particular, they implement RiSpecs of the form type(someArg).
+// See e.g. test/parallel/forall/vass/3types-*.
+// We want to keep these reduce intents in their original form
+// until we process reduce intents later.
+//
+// We do it here to avoid transforming it into _type_construct_C ( ... ).
+// That would be incorrect because this is a special syntax for reduce intent.
+//
+static SymExpr* callUsedInRiSpec(Expr* call, CallExpr* parent) {
+  SymExpr* retval = NULL;
+
+  if (parent != NULL && parent->isPrimitive(PRIM_MOVE) == true) {
+    SymExpr* destSE      = toSymExpr(parent->get(1));
+    Symbol*  dest        = destSE->symbol();
+    SymExpr* riSpecMaybe = dest->firstSymExpr();
+
+    if (ForallIntent* fi = toForallIntent(riSpecMaybe->parentExpr)) {
+      if (riSpecMaybe == fi->reduceExpr()) {
+        retval = riSpecMaybe;
+      }
+    }
+  }
+
+  return retval;
+}
+
+//
+// This function partially un-does normalization
+// so that reduce intents specs (see above) don't get messed up.
+//
+static void restoreReduceIntentSpecCall(SymExpr* riSpec, CallExpr* call) {
+  Symbol* temp = riSpec->symbol();
+
+  // Verify the pattern that occurs if callUsedInRiSpec() returns true.
+  // If any of these fail, either the pattern changed or callUsedInRiSpec()
+  // returns true when it shouldn't.
+  INT_ASSERT(temp->firstSymExpr()      == riSpec);
+  INT_ASSERT(temp->lastSymExpr()->next == call);
+
+  // 'temp' has only 2 SymExprs
+  INT_ASSERT(riSpec->symbolSymExprsNext == temp->lastSymExpr());
+
+  // Remove 'temp'.
+  temp->defPoint->remove();
+
+  call->parentExpr->remove();
+
+  // Put 'call' back into riSpec.
+  riSpec->replace(call->remove());
 }
 
 /************************************* | **************************************
@@ -1972,6 +1955,8 @@ static void normVarTypeInference(DefExpr* defExpr) {
           // generic record case ...
           argExpr->insertAtHead(new NamedExpr("this", new SymExpr(var)));
 
+          var->addFlag(FLAG_DELAY_GENERIC_EXPANSION);
+
         } else {
           // ... but not in the non-generic record case
           argExpr->insertAtHead(var);
@@ -2076,6 +2061,7 @@ static void normVarTypeWithInit(DefExpr* defExpr) {
   Expr*   typeExpr = defExpr->exprType->remove();
   Expr*   initExpr = defExpr->init->remove();
   Type*   type     = typeForTypeSpecifier(typeExpr);
+
   // Note: the above line will not obtain a type if the typeExpr is a CallExpr
   // for a generic record or class, as that is a more complicated set of AST.
 
@@ -2102,31 +2088,30 @@ static void normVarTypeWithInit(DefExpr* defExpr) {
     var->type = type;
 
   } else if (isNonGenericRecordWithInitializers(type) == true) {
-    if (isNewExpr(initExpr) == true) {
+    if        (isSymExpr(initExpr) == true) {
+      defExpr->insertAfter(new CallExpr("init", gMethodToken, var, initExpr));
+
+    } else if (isNewExpr(initExpr) == false) {
+      defExpr->insertAfter(new CallExpr(PRIM_MOVE, var, initExpr));
+
+    } else {
       Expr*     arg     = toCallExpr(initExpr)->get(1)->remove();
       CallExpr* argExpr = toCallExpr(arg);
 
       // This call must be in tree before extending argExpr
       defExpr->insertAfter(argExpr);
 
-      // Convert it in to a use of the init method
+      // Convert it to a use of the init method
       argExpr->baseExpr->replace(new UnresolvedSymExpr("init"));
 
       // Add _mt and _this (insert at head in reverse order)
       argExpr->insertAtHead(var);
       argExpr->insertAtHead(gMethodToken);
-
-    } else {
-      CallExpr* init   = new CallExpr("init", gMethodToken, var);
-      CallExpr* assign = new CallExpr("=",    var,          initExpr);
-
-      defExpr->insertAfter(init);
-      init->insertAfter(assign);
     }
 
     var->type = type;
 
-  } else if (isNewExpr(initExpr)) {
+  } else if (isNewExpr(initExpr) == true) {
     // This check is necessary because the "typeForTypeSpecifier"
     // call will not obtain a type if the typeExpr is a CallExpr,
     // as it is for generic records and classes
@@ -2158,6 +2143,8 @@ static void normVarTypeWithInit(DefExpr* defExpr) {
       argExpr->baseExpr->replace(new UnresolvedSymExpr("init"));
       argExpr->insertAtHead(new NamedExpr("this", new SymExpr(initExprTemp)));
       argExpr->insertAtHead(gMethodToken);
+
+      initExprTemp->addFlag(FLAG_DELAY_GENERIC_EXPANSION);
 
       // Assign the rhs into the lhs.
       CallExpr*  assign   = new CallExpr("=",       typeTemp,  initExprTemp);
@@ -2737,6 +2724,40 @@ static void updateInitMethod(FnSymbol* fn) {
   } else {
     INT_FATAL(fn, "initializer on non-class type");
   }
+}
+
+/************************************* | **************************************
+*                                                                             *
+* If se is a type alias, resolves it recursively, or fails and returns NULL.  *
+*                                                                             *
+************************************** | *************************************/
+
+static TypeSymbol* expandTypeAlias(SymExpr* se) {
+  TypeSymbol* retval = NULL;
+
+  while (se != NULL && retval == NULL) {
+    Symbol* sym = se->symbol();
+
+    if (TypeSymbol* ts = toTypeSymbol(sym)) {
+      retval = ts;
+
+    } else if (VarSymbol* vs = toVarSymbol(sym)) {
+      if (vs->isType() == true) {
+        // The definition in the init field of its declaration.
+        DefExpr* def = vs->defPoint;
+
+        se = toSymExpr(def->init);
+
+      } else {
+        se = NULL;
+      }
+
+    } else {
+      se = NULL;
+    }
+  }
+
+  return retval;
 }
 
 /************************************* | **************************************

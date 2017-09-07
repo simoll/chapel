@@ -94,10 +94,9 @@ module ChapelBase {
 
   inline proc =(ref a, b: a.type) where isClassType(a.type)
   { __primitive("=", a, b); }
-  // Because resolution prefers user-defined versions to ones marked as "compiler
-  // generated", it is desirable to add that flag to this default version.
-  // In that way, a user-supplied version of assignment will override this one.
+
   pragma "compiler generated"
+  pragma "last resort" // so user-supplied assignment will override this one.
     // The CG pragma is needed because this function interferes with
     // assignments defined for sync and single class types.
   inline proc =(ref a, b:_nilType) where isClassType(a.type) {
@@ -779,15 +778,14 @@ module ChapelBase {
     return ret;
   }
 
-  enum localizationStyle_t { locNone, locWhole, locSubchunks };
-
   inline proc _ddata_allocate(type eltType, size: integral,
-                              locStyle = localizationStyle_t.locNone,
                               subloc = c_sublocid_none) {
-    var ret:_ddata(eltType);
-    __primitive("array_alloc", ret, size,
-                locStyle == localizationStyle_t.locSubchunks, subloc);
+    var ret: _ddata(eltType);
+    var callAgain: bool;
+    __primitive("array_alloc", ret, size, subloc, c_ptrTo(callAgain), c_nil);
     init_elts(ret, size, eltType);
+    if callAgain then
+      __primitive("array_alloc", ret, size, subloc, c_nil, ret);
     return ret;
   }
 
@@ -838,8 +836,10 @@ module ChapelBase {
 
   // Parent class for _EndCount instances so that it's easy
   // to add non-generic fields here.
+  // And to get 'errors' field from any generic instantiation.
   pragma "no default functions"
   class _EndCountBase {
+    var errors: chpl_TaskErrors;
     var taskList: c_void_ptr = _defaultOf(c_void_ptr);
   }
 
@@ -913,8 +913,11 @@ module ChapelBase {
   pragma "no remote memory fence"
   proc _upEndCount(e: _EndCount, param countRunningTasks=true, numTasks) {
     e.i.add(numTasks:int, memory_order_release);
+
     if countRunningTasks {
       here.runningTaskCntAdd(numTasks:int-1);  // decrement is in _waitEndCount()
+    } else {
+      here.runningTaskCntSub(1);
     }
   }
 
@@ -923,23 +926,26 @@ module ChapelBase {
   // fork (on) if needed.
   pragma "dont disable remote value forwarding"
   pragma "down end count fn"
-  proc _downEndCount(e: _EndCount) {
+  proc _downEndCount(e: _EndCount, err: Error) {
+    // save the task error
+    chpl_save_task_error(e, err);
     // inform anybody waiting that we're done
     e.i.sub(1, memory_order_release);
   }
 
   // This function is called once by the initiating task.  As above, no
   // on statement needed.
-  // called for sync blocks (implicit or explicit), unbounded coforalls, cobegins.
+  // called for sync blocks (implicit or explicit), unbounded coforalls
   pragma "dont disable remote value forwarding"
-  proc _waitEndCount(e: _EndCount, param countRunningTasks=true) {
-    // See if we can help with any of the started tasks
-    chpl_taskListExecute(e.taskList);
-
+  pragma "unchecked throws"
+  proc _waitEndCount(e: _EndCount, param countRunningTasks=true) throws {
     // Remove the task that will just be waiting/yielding in the following
     // waitFor() from the running task count to let others do real work. It is
     // re-added after the waitFor().
     here.runningTaskCntSub(1);
+
+    // See if we can help with any of the started tasks
+    chpl_taskListExecute(e.taskList);
 
     // Wait for all tasks to finish
     e.i.waitFor(0, memory_order_acquire);
@@ -952,11 +958,16 @@ module ChapelBase {
       // re-add the task that was waiting for others to finish
       here.runningTaskCntAdd(1);
     }
+
+    // Throw any error raised by a task this is waiting for
+    if ! e.errors.empty() then
+      throw new TaskErrors(e.errors);
   }
 
-  // called for bounded coforalls
+  // called for bounded coforalls and cobegins
   pragma "dont disable remote value forwarding"
-  proc _waitEndCount(e: _EndCount, param countRunningTasks=true, numTasks) {
+  pragma "unchecked throws"
+  proc _waitEndCount(e: _EndCount, param countRunningTasks=true, numTasks) throws {
     // See if we can help with any of the started tasks
     chpl_taskListExecute(e.taskList);
 
@@ -965,7 +976,13 @@ module ChapelBase {
 
     if countRunningTasks {
       here.runningTaskCntSub(numTasks:int-1);
+    } else {
+      here.runningTaskCntAdd(1);
     }
+
+    // Throw any error raised by a task this is waiting for
+    if ! e.errors.empty() then
+      throw new TaskErrors(e.errors);
   }
 
   proc _upDynamicEndCount(param countRunningTasks=true) {
@@ -975,14 +992,20 @@ module ChapelBase {
 
   pragma "dont disable remote value forwarding"
   pragma "down end count fn"
-  proc _downDynamicEndCount() {
+  proc _downDynamicEndCount(err: Error) {
     var e = __primitive("get dynamic end count");
-    _downEndCount(e);
+    _downEndCount(e, err);
   }
 
-  proc _waitDynamicEndCount(param countRunningTasks=true) {
+  // This version is called for normal sync blocks.
+  pragma "unchecked throws"
+  proc _waitDynamicEndCount(param countRunningTasks=true) throws {
     var e = __primitive("get dynamic end count");
     _waitEndCount(e, countRunningTasks);
+
+    // Throw any error raised by a task this sync statement is waiting for
+    if ! e.errors.empty() then
+      throw new TaskErrors(e.errors);
   }
 
   pragma "command line setting"
@@ -1118,6 +1141,7 @@ module ChapelBase {
   }
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "init copy fn"
   inline proc chpl__initCopy(x: _tuple) {
     // body inserted during generic instantiation
@@ -1125,6 +1149,7 @@ module ChapelBase {
 
   // Catch-all initCopy implementation:
   pragma "compiler generated"
+  pragma "last resort"
   pragma "init copy fn"
   inline proc chpl__initCopy(const x) {
     // body adjusted during generic instantiation
@@ -1132,6 +1157,7 @@ module ChapelBase {
   }
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "donor fn"
   pragma "auto copy fn"
   inline proc chpl__autoCopy(x: _tuple) {
@@ -1139,6 +1165,7 @@ module ChapelBase {
   }
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "donor fn"
   pragma "unref fn"
   inline proc chpl__unref(x: _tuple) {
@@ -1146,6 +1173,7 @@ module ChapelBase {
   }
 
 
+  pragma "compiler generated"
   pragma "donor fn"
   pragma "auto copy fn"
   inline proc chpl__autoCopy(ir: _iteratorRecord) {
@@ -1154,11 +1182,13 @@ module ChapelBase {
   }
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "donor fn"
   pragma "auto copy fn"
   inline proc chpl__autoCopy(const x) return chpl__initCopy(x);
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "unalias fn"
   inline proc chpl__unalias(x) {
     pragma "no copy" var ret = x;
@@ -1185,14 +1215,17 @@ module ChapelBase {
   inline proc chpl__maybeAutoDestroyed(x) param return true;
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "auto destroy fn"
   inline proc chpl__autoDestroy(x: object) { }
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "auto destroy fn"
   inline proc chpl__autoDestroy(type t)  { }
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "auto destroy fn"
   inline proc chpl__autoDestroy(x: ?t) {
     __primitive("call destructor", x);
@@ -1693,6 +1726,7 @@ module ChapelBase {
 
   // analogously to proc =(ref a, b:_nilType) where isClassType(a.type)
   pragma "compiler generated"
+  pragma "last resort"
   inline proc =(ref a, b:_nilType) where isExternClassType(a.type)
   { __primitive("=", a, nil); }
 

@@ -109,6 +109,7 @@ bool fNoDeadCodeElimination = false;
 bool fNoScalarReplacement = false;
 bool fNoTupleCopyOpt = false;
 bool fNoRemoteValueForwarding = false;
+bool fNoRemoteSerialization = false;
 bool fNoRemoveCopyCalls = false;
 bool fNoOptimizeLoopIterators = false;
 bool fNoVectorize = true;
@@ -638,6 +639,7 @@ static void setFastFlag(const ArgumentDescription* desc, const char* unused) {
   fNoOptimizeLoopIterators = false;
   fNoLiveAnalysis = false;
   fNoRemoteValueForwarding = false;
+  fNoRemoteSerialization = false;
   fNoRemoveCopyCalls = false;
   fNoScalarReplacement = false;
   fNoTupleCopyOpt = false;
@@ -683,6 +685,7 @@ static void setBaselineFlag(const ArgumentDescription* desc, const char* unused)
   fNoOptimizeLoopIterators = true;    // --no-optimize-loop-iterators
   fNoVectorize = true;                // --no-vectorize
   fNoRemoteValueForwarding = true;    // --no-remote-value-forwarding
+  fNoRemoteSerialization = true;      // --no-remote-serialization
   fNoRemoveCopyCalls = true;          // --no-remove-copy-calls
   fNoScalarReplacement = true;        // --no-scalar-replacement
   fNoTupleCopyOpt = true;             // --no-tuple-copy-opt
@@ -788,7 +791,7 @@ static ArgumentDescription arg_desc[] = {
 
  {"", ' ', NULL, "Optimization Control Options", NULL, NULL, NULL, NULL},
  {"baseline", ' ', NULL, "Disable all Chapel optimizations", "F", &fBaseline, "CHPL_BASELINE", setBaselineFlag},
- {"cache-remote", ' ', NULL, "Enable cache for remote data (must be enabled specifically)", "F", &fCacheRemote, "CHPL_CACHE_REMOTE", setCacheEnable},
+ {"cache-remote", ' ', NULL, "[Don't] enable cache for remote data", "N", &fCacheRemote, "CHPL_CACHE_REMOTE", setCacheEnable},
  {"copy-propagation", ' ', NULL, "Enable [disable] copy propagation", "n", &fNoCopyPropagation, "CHPL_DISABLE_COPY_PROPAGATION", NULL},
  {"dead-code-elimination", ' ', NULL, "Enable [disable] dead code elimination", "n", &fNoDeadCodeElimination, "CHPL_DISABLE_DEAD_CODE_ELIMINATION", NULL},
  {"fast", ' ', NULL, "Use fast default settings", "F", &fFastFlag, "CHPL_FAST", setFastFlag},
@@ -804,6 +807,7 @@ static ArgumentDescription arg_desc[] = {
  {"optimize-on-clause-limit", ' ', "<limit>", "Limit recursion depth of on clause optimization search", "I", &optimize_on_clause_limit, "CHPL_OPTIMIZE_ON_CLAUSE_LIMIT", NULL},
  {"privatization", ' ', NULL, "Enable [disable] privatization of distributed arrays and domains", "n", &fNoPrivatization, "CHPL_DISABLE_PRIVATIZATION", NULL},
  {"remote-value-forwarding", ' ', NULL, "Enable [disable] remote value forwarding", "n", &fNoRemoteValueForwarding, "CHPL_DISABLE_REMOTE_VALUE_FORWARDING", NULL},
+ {"remote-serialization", ' ', NULL, "Enable [disable] serialization for remote consts", "n", &fNoRemoteSerialization, "CHPL_DISABLE_REMOTE_SERIALIZATION", NULL},
  {"remove-copy-calls", ' ', NULL, "Enable [disable] remove copy calls", "n", &fNoRemoveCopyCalls, "CHPL_DISABLE_REMOVE_COPY_CALLS", NULL},
  {"scalar-replacement", ' ', NULL, "Enable [disable] scalar replacement", "n", &fNoScalarReplacement, "CHPL_DISABLE_SCALAR_REPLACEMENT", NULL},
  {"scalar-replace-limit", ' ', "<limit>", "Limit on the size of tuples being replaced during scalar replacement", "I", &scalar_replace_limit, "CHPL_SCALAR_REPLACE_TUPLE_LIMIT", NULL},

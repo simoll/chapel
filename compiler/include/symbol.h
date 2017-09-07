@@ -92,10 +92,11 @@ ArgSymbol* tiMarkForIntent(IntentTag intent);
 ArgSymbol* tiMarkForTFIntent(int tfIntent);
 
 
-/******************************** | *********************************
-*                                                                   *
-*                                                                   *
-********************************* | ********************************/
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 class Symbol : public BaseAST {
 public:
@@ -168,6 +169,15 @@ public:
   SymExpr*           getSingleUse()                            const;
   // Return the single def of this Symbol, or NULL if there are 0 or >= 2
   SymExpr*           getSingleDef()                            const;
+
+  // The compiler really ought to view a call to `init` that
+  // constructs a const record as the single "def". However it
+  // might consider it a "use" for various reasons. This method
+  // is useful for finding such cases.
+  // This function finds the statement expression that is responsible
+  // for initializing this symbol.
+  Expr*              getInitialization()                       const;
+
 protected:
                      Symbol(AstTag      astTag,
                             const char* init_name,
@@ -205,16 +215,15 @@ private:
 bool isString(Symbol* symbol);
 bool isUserDefinedRecord(Symbol* symbol);
 
-/******************************** | *********************************
-*                                                                   *
-* This class has two roles:                                         *
-*    1) A common abstract base class for VarSymbol and ArgSymbol.   *
-*    2) Maintain location state as an IPE "optimization".           *
-*                                                                   *
-********************************* | ********************************/
+/************************************* | **************************************
+*                                                                             *
+* This class has two roles:                                                   *
+*    1) A common abstract base class for VarSymbol and ArgSymbol.             *
+*    2) Maintain location state as an IPE "optimization".                     *
+*                                                                             *
+************************************** | *************************************/
 
-class LcnSymbol : public Symbol
-{
+class LcnSymbol : public Symbol {
 public:
   int       depth()                                            const;
   int       offset()                                           const;
@@ -235,10 +244,11 @@ private:
   int       mOffset;               // Byte offset within frame
 };
 
-/******************************** | *********************************
-*                                                                   *
-*                                                                   *
-********************************* | ********************************/
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 class VarSymbol : public LcnSymbol {
 public:
@@ -287,13 +297,13 @@ public:
   void* llvmDIGlobalVariable;
   void* llvmDIVariable;
 #endif
-
 };
 
-/******************************** | *********************************
-*                                                                   *
-*                                                                   *
-********************************* | ********************************/
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 class ArgSymbol : public LcnSymbol {
 public:
@@ -347,10 +357,11 @@ public:
 #endif
 };
 
-/******************************** | *********************************
-*                                                                   *
-*                                                                   *
-********************************* | ********************************/
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 class TypeSymbol : public Symbol {
  public:
@@ -385,6 +396,7 @@ class TypeSymbol : public Symbol {
 
   void renameInstantiatedMulti(SymbolMap& subs, FnSymbol* fn);
   void renameInstantiatedSingle(Symbol* sym);
+  void renameInstantiatedFromSuper(TypeSymbol* superSym);
 
   GenRet codegen();
   void codegenDef();
@@ -533,6 +545,8 @@ private:
 
   bool                       _throwsError;
 };
+
+const char* toString(FnSymbol* fn);
 
 /************************************* | **************************************
 *                                                                             *

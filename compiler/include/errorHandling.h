@@ -21,7 +21,13 @@
 #define _ERROR_HANDLING_H_
 
 class BlockStmt;
+class Expr;
+class Symbol;
 
 void lowerErrorHandling();
+void lowerCheckErrorPrimitive();
+
+bool isCheckErrorStmt(Expr* e);
+Symbol* getErrorSymbolFromCheckErrorStmt(Expr* e);
 
 #endif

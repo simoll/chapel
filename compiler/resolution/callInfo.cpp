@@ -20,13 +20,21 @@
 #include "callInfo.h"
 
 #include "baseAST.h"
+#include "driver.h"
 #include "expr.h"
+#include "iterator.h"
+#include "stringutil.h"
 
-CallInfo::CallInfo(CallExpr* icall, bool checkOnly, bool initOkay) {
-  call    = icall;
-  scope   = NULL;
-  name    = NULL;
-  badcall = false;
+CallInfo::CallInfo() {
+  call  = NULL;
+  scope = NULL;
+  name  = NULL;
+}
+
+bool CallInfo::isNotWellFormed(CallExpr* callExpr) {
+  bool retval = false;
+
+  call = callExpr;
 
   if (SymExpr* se = toSymExpr(call->baseExpr)) {
     name = se->symbol()->name;
@@ -53,15 +61,11 @@ CallInfo::CallInfo(CallExpr* icall, bool checkOnly, bool initOkay) {
     }
   }
 
-  for_actuals(actual, call) {
-    bool isThis = false;
+  for (int i = 1; i <= call->numActuals() && retval == false; i++) {
+    Expr* actual = call->get(i);
 
     if (NamedExpr* named = toNamedExpr(actual)) {
       actualNames.add(named->name);
-
-      if (initOkay == true && named->name == astrThis) {
-        isThis = true;
-      }
 
       actual = named->actual;
 
@@ -70,37 +74,153 @@ CallInfo::CallInfo(CallExpr* icall, bool checkOnly, bool initOkay) {
     }
 
     SymExpr* se = toSymExpr(actual);
+
     INT_ASSERT(se);
 
-    Type*    t  = se->symbol()->type;
+    Symbol*  sym = se->symbol();
+    Type*    t   = sym->type;
 
-    if (t == dtUnknown && se->symbol()->hasFlag(FLAG_TYPE_VARIABLE) == false) {
-      if (checkOnly) {
-        badcall = true;
-      } else {
-        USR_FATAL(call,
-                  "use of '%s' before encountering its definition, "
-                  "type unknown",
-                  se->symbol()->name);
-      }
+    if (t == dtUnknown && sym->hasFlag(FLAG_TYPE_VARIABLE) == false) {
+      retval = true;
+
+    } else if (t->symbol->hasFlag(FLAG_GENERIC) == true &&
+               sym->hasFlag(FLAG_DELAY_GENERIC_EXPANSION) == false) {
+      retval = true;
+
+    } else {
+      actuals.add(sym);
+    }
+  }
+
+  return retval;
+}
+
+void CallInfo::haltNotWellFormed() const {
+  for (int i = 1; i <= call->numActuals(); i++) {
+    Expr* actual = call->get(i);
+
+    if (NamedExpr* named = toNamedExpr(actual)) {
+      actual = named->actual;
     }
 
-    if (t->symbol->hasFlag(FLAG_GENERIC) == true) {
-      if (initOkay == true && isThis == true) {
-        // initOkay is only used when resolving an initializer call,
-        // so we allow the this argument to be generic, as we will
-        // perform the work necessary to instantiate it.
+    SymExpr* se = toSymExpr(actual);
+    INT_ASSERT(se);
 
-      } else if (checkOnly == true) {
-        badcall = true;
+    Symbol*  sym = se->symbol();
+    Type*    t   = sym->type;
 
-      } else {
+    if (t == dtUnknown && sym->hasFlag(FLAG_TYPE_VARIABLE) == false) {
+      USR_FATAL(call,
+                "use of '%s' before encountering its definition, "
+                "type unknown",
+                sym->name);
+
+    } else if (t->symbol->hasFlag(FLAG_GENERIC) == true) {
+      if (sym->hasFlag(FLAG_DELAY_GENERIC_EXPANSION) == false) {
         INT_FATAL(call,
                   "the type of the actual argument '%s' is generic",
-                  se->symbol()->name);
+                  sym->name);
       }
     }
-
-    actuals.add(se->symbol());
   }
+}
+
+const char* toString(CallInfo* info) {
+  bool        method = false;
+  bool        _this  = false;
+  int         start  = 0;
+  const char* retval = "";
+
+  if (info->actuals.n            >  1 &&
+      info->actuals.head()->type == dtMethodToken) {
+    method = true;
+    start  =    2;
+  }
+
+  if (info->name == astrThis) {
+    _this  =  true;
+    method = false;
+    start  =     2;
+  }
+
+  if (method == true) {
+    if (info->actuals.v[1] &&
+        info->actuals.v[1]->hasFlag(FLAG_TYPE_VARIABLE)) {
+      retval = astr(retval, "type ", toString(info->actuals.v[1]->type), ".");
+
+    } else {
+      retval = astr(retval,          toString(info->actuals.v[1]->type), ".");
+    }
+  }
+
+  if (developer                                   == false &&
+      strncmp("_type_construct_", info->name, 16) == 0) {
+    retval = astr(retval, info->name+16);
+
+  } else if (developer == false &&
+             strncmp("_construct_", info->name, 11) == 0) {
+    retval = astr(retval, info->name + 11);
+    retval = astr(retval, ".init");
+
+  } else if (_this == false) {
+    retval = astr(retval, info->name);
+  }
+
+  if (info->call->methodTag == false) {
+    if (info->call->square == true) {
+      retval = astr(retval, "[");
+    } else {
+      retval = astr(retval, "(");
+    }
+  }
+
+  for (int i = start; i < info->actuals.n; i++) {
+    Symbol*        sym  = info->actuals.v[i];
+    VarSymbol*     var  = toVarSymbol(sym);
+    Type*          type = sym->type;
+    AggregateType* at   = toAggregateType(type);
+    IteratorInfo*  ii   = (at != NULL) ? at->iteratorInfo : NULL;
+
+    if (i > start) {
+      retval = astr(retval, ", ");
+    }
+
+    if (info->actualNames.v[i] != NULL) {
+      retval = astr(retval, info->actualNames.v[i], "=");
+    }
+
+    if (type->symbol->hasFlag(FLAG_ITERATOR_RECORD)   == true &&
+        ii->iterator->hasFlag(FLAG_PROMOTION_WRAPPER) == true) {
+      retval = astr(retval, "promoted expression");
+
+    } else if (sym->hasFlag(FLAG_TYPE_VARIABLE) == true) {
+      retval = astr(retval, "type ", toString(type));
+
+    } else if (var != NULL && var->immediate != NULL) {
+      if (var->immediate->const_kind == CONST_KIND_STRING) {
+        retval = astr(retval, "\"", var->immediate->v_string, "\"");
+
+      } else {
+        const size_t bufSize = 512;
+        char         buff[bufSize];
+
+        snprint_imm(buff, bufSize, *var->immediate);
+
+        retval = astr(retval, buff);
+      }
+
+    } else {
+      retval = astr(retval, toString(type));
+    }
+  }
+
+  if (info->call->methodTag == false) {
+    if (info->call->square == true) {
+      retval = astr(retval, "]");
+    } else {
+      retval = astr(retval, ")");
+    }
+  }
+
+  return retval;
 }

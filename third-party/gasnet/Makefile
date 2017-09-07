@@ -14,14 +14,7 @@ CHPL_GASNET_CFG_OPTIONS += --enable-segment-$(CHPL_MAKE_COMM_SEGMENT) --enable-a
 # disable it in all others.
 SUB_SEG = $(CHPL_MAKE_COMM_SUBSTRATE)-$(CHPL_MAKE_COMM_SEGMENT)
 ifneq (,$(findstring $(SUB_SEG), udp-fast udp-large))
-
-# Enable pshm but not on Mac OS X because it doesn't build there
-ifeq ($(CHPL_MAKE_PLATFORM), darwin)
-CHPL_GASNET_CFG_OPTIONS += --disable-pshm
-else
 CHPL_GASNET_CFG_OPTIONS += --enable-pshm
-endif
-
 else
 CHPL_GASNET_CFG_OPTIONS += --disable-pshm
 endif
@@ -41,9 +34,11 @@ endif
 ifneq (, $(filter $(CHPL_MAKE_TARGET_PLATFORM),cray-xe cray-xc cray-xk))
 CHPL_GASNET_CFG_OPTIONS += --enable-pthreads
 ifeq ($(CHPL_MAKE_COMM_SUBSTRATE),gemini)
+CHPL_GASNET_CFG_OPTIONS += --enable-gemini-multi-domain
 else
 ifeq ($(CHPL_MAKE_COMM_SUBSTRATE),aries)
 CHPL_GASNET_CFG_OPTIONS += --enable-aries
+CHPL_GASNET_CFG_OPTIONS += --enable-aries-multi-domain
 else
 # We need to do this because the auto-detect stuff for gemini is not
 # yet working as well as the portals auto-detect
@@ -68,6 +63,14 @@ else
 CHPL_GASNET_CFG_SCRIPT=configure
 endif
 endif
+
+# Build amudprun for the host platform and replace the default one that was
+# built for the target platform. Note that this uses an "unofficial" target
+# that the gasnet team has provided for us.
+ifeq ($(CHPL_MAKE_LAUNCHER),amudprun)
+XTRA_POST_BUILD_COMMAND=cd $(GASNET_BUILD_DIR)/other/amudp && $(MAKE) amudprun-host && mv amudprun-host amudprun
+endif
+
 
 CHPL_GASNET_ENV_VARS:= CC='$(CC)' CXX='$(CXX)'
 
@@ -97,6 +100,7 @@ gasnet-config: FORCE
 
 gasnet-build: FORCE
 	cd $(GASNET_BUILD_DIR) && $(MAKE) all
+	$(XTRA_POST_BUILD_COMMAND)
 
 gasnet-install: FORCE
 	cd $(GASNET_BUILD_DIR) && $(MAKE) install

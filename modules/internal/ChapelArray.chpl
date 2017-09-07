@@ -623,6 +623,7 @@ module ChapelArray {
 
   // pragma is a workaround for ref-pair vs generic/specific overload resolution
   pragma "compiler generated"
+  pragma "last resort"
   proc chpl__ensureDomainExpr(x...) {
     return chpl__buildDomainExpr((...x));
   }
@@ -1035,6 +1036,17 @@ module ChapelArray {
       }
     }
 
+    proc chpl__serialize() where this._value.type : DefaultRectangularDom {
+      return this.dims();
+    }
+
+    // TODO: we *SHOULD* be allowed to query param properties from a type....
+    proc type chpl__deserialize(data) {
+      // BHARSH TODO: Is the use of 'this' here documented anywhere?
+      const x : this;
+      return _newDomain(defaultDist.newRectangularDom(x.rank, x.idxType, x.stridable, data));
+    }
+
     proc _do_destroy () {
       if ! _unowned {
         on _instance {
@@ -1282,6 +1294,8 @@ module ChapelArray {
 
     /* Add index ``i`` to this domain. This method is also available
        as the ``+=`` operator.
+
+       The domain must be irregular.
      */
     proc add(i) {
       return _value.dsiAdd(i);
@@ -3211,6 +3225,46 @@ module ChapelArray {
         a.remove(e);
       else
         a.add(e);
+  }
+
+  //
+  // BaseSparseDom operator overloads
+  //
+  proc +=(ref sd: domain, inds: [] index(sd)) where isSparseDom(sd) {
+    if inds.size == 0 then return;
+
+    sd._value.dsiBulkAdd(inds);
+  }
+
+
+  // TODO: Currently not optimized
+  proc +=(ref sd: domain, d: domain)
+  where isSparseDom(sd) && d.rank==sd.rank && sd.idxType==d.idxType {
+    if d.size == 0 then return;
+
+    const indCount = d.numIndices;
+    var arr: [{0..#indCount}] index(sd);
+
+    for (i,j) in zip(d, 0..) do arr[j] = i;
+
+    var rowSorted = false;
+
+    // Once an interface supports it:
+    // if sd.RMO && d.RMO then rowSorted = true;
+
+    sd._value.dsiBulkAdd(arr, rowSorted, true, false);
+  }
+
+  // TODO: Implement bulkRemove
+  proc -=(ref sd: domain, inds: [] index(sd)) where isSparseDom(sd) {
+    for ind in inds do
+      sd -= ind;
+  }
+
+  proc -=(ref sd: domain, d: domain)
+  where isSparseDom(sd) && d.rank==sd.rank && sd.idxType==d.idxType {
+    for ind in d do
+      sd -= ind;
   }
   //
   // Helper functions

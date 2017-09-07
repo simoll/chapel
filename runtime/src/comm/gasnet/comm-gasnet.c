@@ -292,7 +292,6 @@ size_t setup_large_fork_task(large_fork_task_t* dst, large_fork_t* f, size_t nby
   chpl_comm_bundleData_t comm  = { .caller = f->hdr.caller,
                                    .ack    = f->hdr.ack };
   chpl_comm_on_bundle_t bundle = { .comm =  comm };
-  chpl_comm_on_bundle_t *bptr  = &dst->bundle;
 
   // Copy task-local data to the new task
   bundle.task_bundle.state = f->hdr.state;
@@ -753,7 +752,6 @@ static void set_max_segsize_env_var(size_t size) {
 }
 
 static void set_max_segsize() {
-  FILE* file = NULL;
   size_t size;
 
   if ((size = chpl_comm_getenvMaxHeapSize()) != 0) {
@@ -779,11 +777,27 @@ static void set_max_segsize() {
 #endif
 }
 
+static void set_num_comm_domains() {
+  char num_cpus_val[22]; // big enough for an unsigned 64-bit quantity
+  int num_cpus;
+
+  num_cpus = chpl_getNumPhysicalCpus(true) + 1;
+
+  snprintf(num_cpus_val, sizeof(num_cpus_val), "%d", num_cpus);
+  if (setenv("GASNET_DOMAIN_COUNT", num_cpus_val, 0) != 0) {
+    chpl_error("Cannot setenv(\"GASNET_DOMAIN_COUNT\")", 0, 0);
+  }
+
+  if (setenv("GASNET_AM_DOMAIN_POLL_MASK", "3", 0) != 0) {
+    chpl_error("Cannot setenv(\"GASNET_AM_DOMAIN_POLL_MASK\")", 0, 0);
+  }
+}
+
 void chpl_comm_init(int *argc_p, char ***argv_p) {
 //  int status; // Some compilers complain about unused variable 'status'.
 
   set_max_segsize();
-
+  set_num_comm_domains();
   assert(sizeof(gasnet_handlerarg_t)==sizeof(uint32_t));
 
   gasnet_init(argc_p, argv_p);
@@ -900,7 +914,7 @@ void chpl_comm_rollcall(void) {
            chpl_numNodes, chpl_nodeName());
 }
 
-void chpl_comm_desired_shared_heap(void** start_p, size_t* size_p) {
+void chpl_comm_get_registered_heap(void** start_p, size_t* size_p) {
 #if defined(GASNET_SEGMENT_FAST) || defined(GASNET_SEGMENT_LARGE)
   *start_p = chpl_numGlobalsOnHeap * sizeof(wide_ptr_t) 
              + (char*)seginfo_table[chpl_nodeID].addr;
@@ -1215,7 +1229,6 @@ void  chpl_comm_get(void* addr, c_nodeid_t node, void* raddr,
       // the registered memory segment.
       int local_in_segment;
       void* local_buf = NULL;
-      size_t buf_sz = 0;
       size_t max_chunk = gasnet_AMMaxLongReply();
       size_t start;
 
@@ -1539,8 +1552,6 @@ void  execute_on_common(c_nodeid_t node, c_sublocid_t subloc,
 void  chpl_comm_execute_on(c_nodeid_t node, c_sublocid_t subloc,
                      chpl_fn_int_t fid,
                      chpl_comm_on_bundle_t *arg, size_t arg_size) {
-  done_t  done;
-
   if (chpl_nodeID == node) {
     assert(0);
     chpl_ftable_call(fid, arg);
@@ -1598,8 +1609,6 @@ void  chpl_comm_execute_on_nb(c_nodeid_t node, c_sublocid_t subloc,
 void  chpl_comm_execute_on_fast(c_nodeid_t node, c_sublocid_t subloc,
                           chpl_fn_int_t fid,
                           chpl_comm_on_bundle_t *arg, size_t arg_size) {
-  done_t  done;
-
   if (chpl_nodeID == node) {
     assert(0);
     chpl_ftable_call(fid, arg);
