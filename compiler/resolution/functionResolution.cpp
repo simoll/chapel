@@ -1669,6 +1669,7 @@ static void reissueCompilerWarning(const char* str, int offset) {
         !from->getFunction()->hasFlag(FLAG_COMPILER_GENERATED))
       break;
   }
+  gdbShouldBreakHere();
   USR_WARN(from, "%s", str);
 }
 
@@ -6317,6 +6318,7 @@ static void resolveExprMaybeIssueError(CallExpr* call) {
     if (call->isPrimitive(PRIM_ERROR) == true) {
       USR_FATAL(from, "%s", str);
     } else {
+      gdbShouldBreakHere();
       USR_WARN (from, "%s", str);
     }
 
