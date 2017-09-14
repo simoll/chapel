@@ -645,6 +645,7 @@ module ChapelDistribution {
     // will use explicit processor atomics, even when network
     // atomics are available
     var pid:int = nullPid; // privatized ID, if privatization is supported
+    var _decEltRefCounts : bool = false;
 
     proc isSliceArrayView() param {
       return false;
@@ -692,7 +693,7 @@ module ChapelDistribution {
       return (ret_arr, ret_dom);
     }
 
-    proc dsiDestroyArr(isalias:bool) { }
+    proc dsiDestroyArr() { }
 
     proc dsiReallocate(d: domain) {
       halt("reallocating not supported for this array type");
@@ -931,13 +932,10 @@ module ChapelDistribution {
   // arr is a subclass of :BaseArr but is generic so
   // that arr.eltType is meaningful.
   proc _delete_arr(arr, param privatized:bool) {
-    // decide whether or not the array is an alias
-    var isalias = !arr.dsiOwnsElements() || chpl__isArrayView(arr);
-
     // array implementation can destroy data or other members
-    arr.dsiDestroyArr(isalias);
+    arr.dsiDestroyArr();
 
-    if !isalias {
+    if arr._decEltRefCounts {
       // unlink domain referred to by arr.eltType
       // not necessary for aliases/slices because the original
       // array will take care of it.
