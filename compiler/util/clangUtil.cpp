@@ -2016,6 +2016,13 @@ void addDumpIrPass(const PassManagerBuilder &Builder,
   PM.add(createDumpIrPass(llvmPrintIrStageNum));
 }
 
+static
+void addSaveModulePass(const PassManagerBuilder &Builder,
+    LEGACY_PASS_MANAGER &PM) {
+  PM.add(createSaveModulePass());
+}
+
+
 
 // If we're using the LLVM wide optimizations, we have to add
 // some functions to call put/get into the Chapel runtime layers
