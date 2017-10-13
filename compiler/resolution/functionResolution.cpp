@@ -1981,6 +1981,11 @@ static bool paramWorks(Symbol* actual, Type* formalType) {
     if (is_uint_type(formalType)) {
       return fits_in_uint(get_width(formalType), imm);
     }
+    if (is_real_type(formalType) ||
+        is_imag_type(formalType) ||
+        is_complex_type(formalType) ) {
+      return fits_in_mantissa(get_mantissa_width(formalType), imm);
+    }
     if (imm->const_kind == CONST_KIND_STRING) {
       if (formalType == dtStringC && actual->type == dtString) {
         return true;
@@ -2046,11 +2051,10 @@ static bool considerParamMatches(Type* actualType,
     }
 
     // have int/uint cast to default-size real over a smaller size or complex
-    if (is_int_type(actualType) || is_uint_type(actualType)) {
-      return considerParamMatches(dtReal[FLOAT_SIZE_DEFAULT],
-                                  arg1Type,
-                                  arg2Type);
-    }
+    //if (is_int_type(actualType) || is_uint_type(actualType)) {
+    //  if (arg1Type == dtReal[FLOAT_SIZE_DEFAULT])
+    //    return true;
+    //}
 
     if (is_enum_type(actualType)) {
       return considerParamMatches(dtInt[INT_SIZE_DEFAULT],
