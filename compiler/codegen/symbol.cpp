@@ -233,6 +233,8 @@ llvm::Value* codegenImmediateLLVM(Immediate* i)
               llvm::Type::getDoubleTy(info->module->getContext()),
               i->v_float64);
           break;
+        default:
+          INT_ASSERT("unsupported floating point width");
       }
       break;
     case NUM_KIND_COMPLEX:
@@ -263,6 +265,8 @@ llvm::Value* codegenImmediateLLVM(Immediate* i)
               elements);
           break;
         }
+        default:
+          INT_ASSERT("unsupported complex floating point width");
       }
       break;
     case CONST_KIND_STRING:

@@ -452,6 +452,7 @@ bool is_enum_type(Type*);
 bool isLegalParamType(Type*);
 int  get_width(Type*);
 int  get_mantissa_width(Type*);
+int  get_exponent_width(Type*);
 bool isClass(Type* t);
 bool isClassOrNil(Type* t);
 bool isRecord(Type* t);

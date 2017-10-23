@@ -63,6 +63,7 @@
 
 #include "../ifa/prim_data.h"
 
+#include <cmath>
 #include <inttypes.h>
 #include <map>
 #include <sstream>
@@ -1186,15 +1187,62 @@ static bool fits_in_uint(int width, Immediate* imm) {
   return false;
 }
 
-static bool fits_in_mantissa(int width, Immediate* imm) {
+static bool fits_in_bits_no_sign(int width, int64_t i) {
   // is it between -2**width .. 2**width, inclusive?
   int64_t p = 1;
   p <<= width; // now p is 2**width
 
+  return -p <= i && i <= p;
+}
+
+static bool fits_in_twos_complement(int width, int64_t i) {
+  // would it fit in a width-bit 2's complement representation?
+
+  INT_ASSERT(width < 64);
+
+  int64_t max_pos = 1;
+  max_pos <<= width-1;
+  max_pos--;
+
+  int64_t min_neg = 1+max_pos;
+  return -min_neg <= i <= max_pos;
+}
+
+
+// Does the integer in imm fit in a floating point format with 'width'
+// bits of mantissa?
+static bool fits_in_mantissa(int width, Immediate* imm) {
+  // is it between -2**width .. 2**width, inclusive?
+
   if (imm->const_kind == NUM_KIND_INT && imm->num_index == INT_SIZE_DEFAULT) {
     int64_t i = imm->int_value();
-    return -p <= i && i <= p;
+    return fits_in_bits_no_sign(width, i);
   }
+
+  return false;
+}
+
+static bool fits_in_mantissa_exponent(int mantissa_width,
+                                      int exponent_width,
+                                      Immediate* imm) {
+  double v = 0.0;
+  if (imm->num_index == FLOAT_SIZE_32)
+    v = imm->v_float32;
+  else if(imm->num_index == FLOAT_SIZE_64)
+    v = imm->v_float64;
+  else
+    INT_ASSERT("unsupported floating point size");
+
+  double frac = 0.0;
+  int exp = 0;
+
+  frac = frexp(v, &exp);
+
+  int64_t intpart = 2*frac;
+
+  if (fits_in_bits_no_sign(mantissa_width, intpart) &&
+      fits_in_twos_complement(exponent_width, exp))
+    return true;
 
   return false;
 }
@@ -1406,13 +1454,23 @@ static bool canParamCoerce(Type* actualType, Symbol* actualSym, Type* formalType
     if (is_uint_type(actualType) &&
         get_width(actualType) < get_mantissa_width(formalType))
       return true;
+// TODO:: enable param conversion from real(32) to real(64)?
 //    if (is_real_type(actualType) &&
 //        get_width(actualType) < get_width(formalType))
 //      return true;
-    if (VarSymbol* var = toVarSymbol(actualSym))
-      if (var->immediate)
-        if (fits_in_mantissa(get_mantissa_width(formalType), var->immediate))
-          return true;
+    if (VarSymbol* var = toVarSymbol(actualSym)) {
+      if (var->immediate) {
+        // XYZ immediate not int TODO
+        if (is_int_type(actualType) || is_uint_type(actualType))
+          if (fits_in_mantissa(get_mantissa_width(formalType), var->immediate))
+            return true;
+        if (is_real_type(actualType))
+          if (fits_in_mantissa_exponent(get_mantissa_width(formalType),
+                                        get_exponent_width(formalType),
+                                        var->immediate))
+            return true;
+      }
+    }
   }
   /*
   if (is_complex_type(formalType)) {
@@ -2236,13 +2294,35 @@ static void testArgMapping(FnSymbol* fn1, ArgSymbol* formal1,
     TRACE_DISAMBIGUATE_BY_MATCH("N: Fn %d is more specific\n", DC.j);
     DS.fn2MoreSpecific = true;
 
+    // uint(8) could resolve to int or uint argument, say
+    // it could also resolve to real or complex of any width
+    //  -> preferred coercion order?
+    // say I have f(all numeric types) available
+    // f(my_uint8)
+    //   the only one really ineligible is int(8)
+    //   other than that, we choose the smallest type
+    //   b/c arg1 can coerce into arg2
+    //     int(16)
+    //       better than int(32) int(64)
+    //     uint(16)
+    //       better than uint(32) uint(64)
+    //     real(32)
+    //       better than real(64)
+    //       better than complex(64) complex(128)
+    //
+    //   Now, how to choose between int(16), uint(16), and real(32)?
+    //   by making int/uint "more specific" than "real"
+    // f(1)
+    //   1 is an int, so prefer the 'int' version
+    //   (i.e. prefer the type attached to the param)
+    //   otherwise, 
   } else if ((is_int_type(f1Type) || is_uint_type(f1Type)) &&
-              is_real_type(f2Type)) {
+              (is_real_type(f2Type) || is_complex_type(f2Type))) {
     TRACE_DISAMBIGUATE_BY_MATCH("N1: Fn %d is more specific\n", DC.i);
     DS.fn1MoreSpecific = true;
 
   } else if ((is_int_type(f2Type) || is_uint_type(f2Type)) &&
-              is_real_type(f1Type)) {
+              (is_real_type(f1Type) || is_complex_type(f1Type))) {
     TRACE_DISAMBIGUATE_BY_MATCH("N2: Fn %d is more specific\n", DC.j);
     DS.fn2MoreSpecific = true;
 
