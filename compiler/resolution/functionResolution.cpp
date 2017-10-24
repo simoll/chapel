@@ -1622,6 +1622,7 @@ static bool considerParamMatches(Type* actualType,
                                   arg2Type);
     }
 
+    /*
     if (isSyncType(actualType)) {
       INT_ASSERT(false);
       return considerParamMatches(actualType->getField("valType")->getValType(),
@@ -1634,7 +1635,7 @@ static bool considerParamMatches(Type* actualType,
       return considerParamMatches(actualType->getField("valType")->getValType(),
                                   arg1Type,
                                   arg2Type);
-    }
+    }*/
   }
 
   return false;
@@ -3735,9 +3736,9 @@ static void testArgMapping(FnSymbol*                    fn1,
   bool  formal1Promotes = false;
   bool  formal2Promotes = false;
 
-  Type* syncSingleValType = NULL;
+  Type* actualNotSyncType = actualType;
   if (isSyncType(actualType) || isSingleType(actualType))
-    syncSingleValType = actualType->getField("valType")->getValType();
+    actualNotSyncType = actualType->getField("valType")->getValType();
 
   EXPLAIN("Actual's type: %s\n", toString(actualType));
 
@@ -3851,7 +3852,7 @@ static void testArgMapping(FnSymbol*                    fn1,
     EXPLAIN("J0: Fn %d is more specific\n", j);
     DS.fn2MoreSpecific = true;
 
-  } else if (syncSingleValType != NULL &&
+  /*} else if (syncSingleValType != NULL &&
              syncSingleValType == f1Type &&
              syncSingleValType != f2Type) {
 
@@ -3864,8 +3865,8 @@ static void testArgMapping(FnSymbol*                    fn1,
 
     EXPLAIN("J: Fn %d is more specific\n", j);
     DS.fn2MoreSpecific = true;
-
-  } else if (considerParamMatches(actualType, f1Type, f2Type)) {
+  */
+  } else if (considerParamMatches(actualNotSyncType, f1Type, f2Type)) {
     EXPLAIN("In first param case\n");
 
     // The actual matches formal1's type, but not formal2's
@@ -3890,7 +3891,7 @@ static void testArgMapping(FnSymbol*                    fn1,
       DS.fn1MoreSpecific = true;
     }
 
-  } else if (considerParamMatches(actualType, f2Type, f1Type)) {
+  } else if (considerParamMatches(actualNotSyncType, f2Type, f1Type)) {
     EXPLAIN("In second param case\n");
 
     // The actual matches formal2's type, but not formal1's
