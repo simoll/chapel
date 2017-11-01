@@ -54,6 +54,9 @@ clobber: FORCE
 $(LLVM_SRC_FILE):
 	./unpack-llvm.sh
 
+            #-DRV_ENABLE_CRT=on \
+
+
 $(LLVM_CONFIGURED_HEADER_FILE): $(LLVM_SRC_FILE)
 	mkdir -p $(LLVM_BUILD_DIR)
 	if ./cmake-ok.sh $(CMAKE); then \
@@ -68,8 +71,9 @@ $(LLVM_CONFIGURED_HEADER_FILE): $(LLVM_SRC_FILE)
 	    -DLLVM_ENABLE_PEDANTIC=0 \
 	    -DCLANG_ENABLE_ARCMT=0 \
 	    -DCLANG_ENABLE_STATIC_ANALYZER=0 \
-	    -DLLVM_TARGETS_TO_BUILD="host;X86;AArch64" \
+	    -DLLVM_TARGETS_TO_BUILD="host;X86;AArch64;NVPTX" \
 	    -DLLVM_INSTALL_UTILS=ON \
+            -DPOLLY_ENABLE_GPGPU_CODEGEN=ON \
 	    -Wno-dev \
 	    $(LLVM_SRC_DIR) ; \
 	else \
