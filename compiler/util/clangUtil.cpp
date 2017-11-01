@@ -1034,7 +1034,11 @@ static void setupModule()
   // interpreting, etc.
 
   // Choose the code model
+#if HAVE_LLVM_VER >= 60
+  llvm::Optional<CodeModel::Model> codeModel = None;
+#else
   llvm::CodeModel::Model codeModel = llvm::CodeModel::Default;
+#endif
 
   llvm::CodeGenOpt::Level optLevel =
     fFastFlag ? llvm::CodeGenOpt::Aggressive : llvm::CodeGenOpt::None;
@@ -2101,7 +2105,7 @@ void makeBinaryLLVM(void) {
 
   if( saveCDir[0] != '\0' ) {
     // Save the generated LLVM before optimization.
-    tool_output_file output (preOptFilename.c_str(),
+    TOOL_OUTPUT_FILE output (preOptFilename.c_str(),
                              errorInfo, sys::fs::F_None);
     WriteBitcodeToFile(info->module, output.os());
     output.keep();
@@ -2191,7 +2195,7 @@ void makeBinaryLLVM(void) {
 
     if( saveCDir[0] != '\0' ) {
       // Save the generated LLVM after first chunk of optimization
-      tool_output_file output1 (opt1Filename.c_str(),
+      TOOL_OUTPUT_FILE output1 (opt1Filename.c_str(),
                                errorInfo, sys::fs::F_None);
       WriteBitcodeToFile(info->module, output1.os());
       output1.keep();
@@ -2221,7 +2225,7 @@ void makeBinaryLLVM(void) {
 
       if( saveCDir[0] != '\0' ) {
         // Save the generated LLVM after second chunk of optimization
-        tool_output_file output2 (opt2Filename.c_str(),
+        TOOL_OUTPUT_FILE output2 (opt2Filename.c_str(),
                                  errorInfo, sys::fs::F_None);
         WriteBitcodeToFile(info->module, output2.os());
         output2.keep();
