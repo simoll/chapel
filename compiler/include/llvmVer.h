@@ -17,35 +17,19 @@
  * limitations under the License.
  */
 
-#include "mysystem.h"
+#ifndef _LLVMVER_H_
+#define _LLVMVER_H_
 
-#include "misc.h"
+#ifdef HAVE_LLVM
 
-#include <cerrno>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#include "llvm/Config/llvm-config.h"
 
-bool printSystemCommands = false;
+#define HAVE_LLVM_VER (LLVM_VERSION_MAJOR*10 + LLVM_VERSION_MINOR)
 
-int mysystem(const char* command, 
-             const char* description,
-             bool        ignoreStatus) {
-  int status = 0;
+#if HAVE_LLVM_VER < 40
+#error LLVM version is too old for this version of Chapel
+#endif
 
+#endif //HAVE_LLVM
 
-  // Treat a '#' at the start of a line as a comment
-  if (command[0] != '#') {
-    status = system(command);
-  }
-
-
-  if (status == -1) {
-    USR_FATAL("system() fork failed: %s", strerror(errno));
-
-  } else if (status != 0 && ignoreStatus == false) {
-    USR_FATAL(description);
-  }
-
-  return status;
-}
+#endif //LLVMVER_H

@@ -31,10 +31,15 @@
 
 #include "beautify.h"
 #include "driver.h"
+#include "llvmVer.h"
 #include "misc.h"
 #include "mysystem.h"
 #include "stringutil.h"
 #include "tmpdirname.h"
+
+#ifdef HAVE_LLVM
+#include "llvm/Support/FileSystem.h"
+#endif
 
 #include <pwd.h>
 #include <unistd.h>
@@ -82,10 +87,19 @@ void addIncInfo(const char* incDir) {
 }
 
 void ensureDirExists(const char* dirname, const char* explanation) {
+#ifdef HAVE_LLVM
+  std::error_code err = llvm::sys::fs::create_directories(dirname);
+  if (err) {
+    USR_FATAL("creating directory %s failed: %s\n",
+              dirname,
+              err.message().c_str());
+  }
+#else
   const char* mkdircommand = "mkdir -p ";
   const char* command = astr(mkdircommand, dirname);
 
   mysystem(command, explanation);
+#endif
 }
 
 
@@ -168,9 +182,37 @@ static void ensureTmpDirExists() {
 }
 
 
-void deleteDir(const char* dirname) {
+static
+void deleteDirSystem(const char* dirname) {
   const char* cmd = astr("rm -rf ", dirname);
   mysystem(cmd, astr("removing directory: ", dirname));
+}
+
+#ifdef HAVE_LLVM
+static
+void deleteDirLLVM(const char* dirname) {
+#if HAVE_LLVM_VER >= 50
+  // LLVM 5 added remove_directories
+  std::error_code err = llvm::sys::fs::remove_directories(dirname, false);
+  if (err) {
+    USR_FATAL("removing directory %s failed: %s\n",
+              dirname,
+              err.message().c_str());
+  }
+#else
+  deleteDirSystem(dirname);
+#endif
+}
+#endif
+
+
+
+void deleteDir(const char* dirname) {
+#ifdef HAVE_LLVM
+  deleteDirLLVM(dirname);
+#else
+  deleteDirSystem(dirname);
+#endif
 }
 
 
@@ -442,7 +484,7 @@ const char* createDebuggerFile(const char* debugger, int argc, char* argv[]) {
   return dbgfilename;
 }
 
-std::string runPrintChplEnv(std::map<std::string, const char*> varMap) {
+std::string runPrintChplEnv(std::map<std::string, const char*> varMap, bool llvm) {
   // Run printchplenv script, passing currently known CHPL_vars as well
   std::string command = "";
 
@@ -453,7 +495,8 @@ std::string runPrintChplEnv(std::map<std::string, const char*> varMap) {
   }
 
   // Toss stderr away until printchplenv supports a '--suppresswarnings' flag
-  command += std::string(CHPL_HOME) + "/util/printchplenv --simple 2> /dev/null";
+  command += std::string(CHPL_HOME) + "/util/printchplenv " +
+             (llvm?"--llvm":"--simple") + " 2> /dev/null";
 
   return runCommand(command);
 }
@@ -706,27 +749,30 @@ const char* filenameToModulename(const char* filename) {
   return asubstr(moduleName, strrchr(moduleName, '.'));
 }
 
-void readArgsFromCommand(const char* cmd, std::vector<std::string>& args) {
-  // Gather information from compileline into clangArgs.
-  if(FILE* fd = popen(cmd,"r")) {
-    int ch;
-    // Read arguments.
-    while( (ch = getc(fd)) != EOF ) {
-      // Read the next argument.
-      // skip leading spaces
-      while( ch != EOF && isspace(ch) ) ch = getc(fd);
-      std::string arg;
-      arg.push_back(ch);
-      // read until space. TODO - handle quoting/spaces
+void readArgsFromFile(std::string path, std::vector<std::string>& args) {
+  
+  FILE* fd = fopen(path.c_str(), "r");
+  if (!fd)
+    USR_FATAL("Could not open file %s", path.c_str());
+
+  int ch;
+  // Read arguments.
+  while( (ch = getc(fd)) != EOF ) {
+    // Read the next argument.
+    // skip leading spaces
+    while( ch != EOF && isspace(ch) ) ch = getc(fd);
+    std::string arg;
+    arg.push_back(ch);
+    // read until space. TODO - handle quoting/spaces
+    ch = getc(fd);
+    while( ch != EOF && !isspace(ch) ) {
+      arg += ch;
       ch = getc(fd);
-      while( ch != EOF && !isspace(ch) ) {
-        arg += ch;
-        ch = getc(fd);
-      }
-      // First argument is the clang install directory...
-      args.push_back(arg);
     }
+    args.push_back(arg);
   }
+
+  fclose(fd);
 }
 
 // would just use realpath, but it is not supported on all platforms.

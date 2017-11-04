@@ -130,6 +130,8 @@ include $(RUNTIME_ROOT)/make/Makefile.runtime.rules
 #
 
 RUNTIME_CHPLCONFIG = $(RUNTIME_DIR)/chplconfig
+RUNTIME_LIST_INCLUDESANDDEFINES = $(RUNTIME_DIR)/list-includes-and-defines
+RUNTIME_LIST_LIBRARIES = $(RUNTIME_DIR)/list-libraries
 
 $(RUNTIME_LIB): $(RUNTIME_OBJS) $(RUNTIME_DIR_TIMESTAMP)
 	@rm -f $@
@@ -137,6 +139,8 @@ $(RUNTIME_LIB): $(RUNTIME_OBJS) $(RUNTIME_DIR_TIMESTAMP)
 	$(RANLIB) $@
 	$(TAGS_COMMAND)
 	../util/printchplenv --simple > $(RUNTIME_CHPLCONFIG)
+	$(MAKE) -f etc/Makefile.include printincludesanddefines > $(RUNTIME_LIST_INCLUDESANDDEFINES)
+	$(MAKE) -f etc/Makefile.include printlibraries > $(RUNTIME_LIST_LIBRARIES)
 
 $(RUNTIME_DIR)/main.o: $(RUNTIME_OBJDIR)/src/main.o
 	cp $< $@

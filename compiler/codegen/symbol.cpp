@@ -54,6 +54,10 @@
 #include <inttypes.h>
 #include <stdint.h>
 
+#if HAVE_LLVM
+#include "llvm/IR/LegacyPassManager.h"
+#endif
+
 /******************************** | *********************************
 *                                                                   *
 *                                                                   *
