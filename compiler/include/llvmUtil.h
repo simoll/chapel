@@ -26,10 +26,6 @@
 
 #include "llvmVer.h"
 
-#if HAVE_LLVM_VER < 40
-#error LLVM version is too old for this version of Chapel
-#endif
-
 #include "llvm/IR/IRBuilder.h"
 
 struct PromotedPair {

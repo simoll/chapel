@@ -17,22 +17,26 @@
  * limitations under the License.
  */
 
+#include "llvmDebug.h"
+
+#include "alist.h"
+#include "clangUtil.h"
+#include "codegen.h"
+#include "expr.h"
+#include "genret.h" 
+#include "stringutil.h"
+#include "symbol.h"
+#include "vec.h"
+#include "version.h"
+
 #include <iostream>
 #include <map>
 
-#include "llvmDebug.h"
-#include "stringutil.h"
-#include "expr.h"
-#include "codegen.h"
-#include "symbol.h"
-#include "vec.h"
-#include "alist.h"
-#include "version.h"
-
 #ifdef HAVE_LLVM
 #include "llvm/ADT/ArrayRef.h"
-#include "genret.h" 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Support/raw_ostream.h"
 
 /*
 LLVM provides a class called DIBuilder, you pass the LLVM module to this

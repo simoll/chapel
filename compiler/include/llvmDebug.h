@@ -24,6 +24,7 @@
 
 #ifdef HAVE_LLVM
 
+/*
 #include "llvmUtil.h"
 #include "llvm/Support/raw_os_ostream.h"
 
@@ -34,8 +35,17 @@
 #endif
 
 #include "llvm/IR/DebugInfo.h"
-#include "llvm/IR/DIBuilder.h"
+*/
 
+namespace llvm {
+  class DIType;
+  class DIFile;
+  class DINamespace;
+  class DISubroutineType;
+  class DISubprogram;
+}
+
+#include "llvm/IR/DIBuilder.h"
 #include <vector>
 
 #endif

@@ -28,6 +28,7 @@
 #include "AstVisitor.h"
 #include "astutil.h"
 #include "build.h"
+#include "clangUtil.h"
 #include "codegen.h"
 #include "CollapseBlocks.h"
 #include "docsDriver.h"
@@ -36,7 +37,9 @@
 #include "files.h"
 #include "intlimits.h"
 #include "iterator.h"
+#include "LayeredValueTable.h"
 #include "llvmDebug.h"
+#include "llvmUtil.h"
 #include "misc.h"
 #include "optimizations.h"
 #include "passes.h"
@@ -54,8 +57,12 @@
 #include <inttypes.h>
 #include <stdint.h>
 
-#if HAVE_LLVM
+#ifdef HAVE_LLVM
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
+
+#include "llvm/Support/raw_os_ostream.h"
 #endif
 
 /******************************** | *********************************
