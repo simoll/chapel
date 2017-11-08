@@ -937,6 +937,7 @@ static void localizeReturnSymbols(FnSymbol* iteratorFn, std::vector<SymExpr*> sy
           SET_LINENO(se);
           Symbol* newRet = newTemp("newRet", ret->type);
           newRet->addFlag(FLAG_SHOULD_NOT_PASS_BY_REF);
+          newRet->addFlag(FLAG_INSERT_AUTO_DESTROY);
           block->insertAtHead(new DefExpr(newRet));
           se->setSymbol(newRet);
           retReplacementMap.put(block, newRet);
