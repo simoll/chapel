@@ -548,9 +548,19 @@ initPrimitive() {
   prim_def(PRIM_GETCID, "getcid", returnInfoInt32, false, true);
   prim_def(PRIM_SET_UNION_ID, "set_union_id", returnInfoVoid, true, true);
   prim_def(PRIM_GET_UNION_ID, "get_union_id", returnInfoDefaultInt, false, true);
+
+  // aggregate, field
+  // if the field is a ref, GET_MEMBER is invalid AST
+  // if the field is a ref, GET_MEMBER_VALUE returns the reference
+  // if the field is not a ref, GET_MEMBER and GET_MEMBER_VALUE are the same
   prim_def(PRIM_GET_MEMBER, ".", returnInfoGetMemberRef);
   prim_def(PRIM_GET_MEMBER_VALUE, ".v", returnInfoGetMember, false, true);
+
   // base, field, value
+  // if the field is a ref, and the value is a ref, sets the ptr.
+  // if the field is a ref, and the value is a not ref, invalid AST
+  // if the field is not ref, and the value is a ref, derefs value first
+  // if neither are references, sets the field
   prim_def(PRIM_SET_MEMBER, ".=", returnInfoVoid, true, true);
   prim_def(PRIM_CHECK_NIL, "_check_nil", returnInfoVoid, true, true);
   prim_def(PRIM_NEW, "new", returnInfoFirst);
