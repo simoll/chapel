@@ -550,9 +550,12 @@ initPrimitive() {
   prim_def(PRIM_GET_UNION_ID, "get_union_id", returnInfoDefaultInt, false, true);
 
   // aggregate, field
-  // if the field is a ref, GET_MEMBER is invalid AST
-  // if the field is a ref, GET_MEMBER_VALUE returns the reference
-  // if the field is not a ref, GET_MEMBER and GET_MEMBER_VALUE are the same
+  // if the field is a ref:
+  //   GET_MEMBER is invalid AST
+  //   GET_MEMBER_VALUE returns the reference
+  // if the field is not a ref
+  //   GET_MEMBER returns a reference to the field
+  //   GET_MEMBER_VALUE returns the field value
   prim_def(PRIM_GET_MEMBER, ".", returnInfoGetMemberRef);
   prim_def(PRIM_GET_MEMBER_VALUE, ".v", returnInfoGetMember, false, true);
 
