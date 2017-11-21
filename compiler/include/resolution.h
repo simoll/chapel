@@ -223,6 +223,8 @@ bool evaluateWhereClause(FnSymbol* fn);
 
 bool isAutoDestroyedVariable(Symbol* sym);
 
+SymExpr* findSourceOfYield(CallExpr* yield);
+
 extern Map<Type*,FnSymbol*> valueToRuntimeTypeMap; // convertValueToRuntimeType
 
 struct Serializers {
