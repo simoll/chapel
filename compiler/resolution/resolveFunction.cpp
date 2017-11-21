@@ -365,7 +365,7 @@ static void protoIteratorClass(FnSymbol* fn, Type* yieldedType) {
   // Save the iterator info in the iterator record.
   // The iterator info is still owned by the iterator function.
   ii->irecord->iteratorInfo        = ii;
-  ii->irecord->scalarPromotionType = fn->retType;
+  ii->irecord->scalarPromotionType = yieldedType;
 
   ii->yieldedType = yieldedType;
   ii->iteratorRetTag = fn->retTag;
