@@ -63,5 +63,5 @@ export CHPL_GMP=none
 echo "Setting CHPL_REGEXP to none"
 export CHPL_REGEXP=none
 
-echo "Setting CHPL_LLVM to none"
-export CHPL_LLVM=none
+echo "Setting CHPL_LLVM to llvm"
+export CHPL_LLVM=llvm

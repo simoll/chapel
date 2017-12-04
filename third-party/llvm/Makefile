@@ -52,7 +52,7 @@ clobber: FORCE
 # TODO: investigate LLVM_LINK_LLVM_DYLIB and  LLVM_DYLIB_COMPONENTS
 # LLVM_TOOL_CLANG_BUILD
 $(LLVM_SRC_FILE):
-	./unpack-llvm.sh
+	./update-llvm.sh
 
 $(LLVM_CONFIGURED_HEADER_FILE): $(LLVM_SRC_FILE)
 	mkdir -p $(LLVM_BUILD_DIR)
