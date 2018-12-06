@@ -45,24 +45,29 @@ static llvm::MDNode* generateLoopMetadata(bool addVectorizeEnableMetadata)
   auto tmpNode        = llvm::MDNode::getTemporary(ctx, llvm::None);
   args.push_back(tmpNode.get());
 
-  // llvm.loop.vectorize.enable metadata is only used by LoopVectorizer to:
-  // 1) Explicitly disable vectorization of particular loop
-  // 2) Print warning when vectorization is enabled (using metadata) and vectorization didn't occur
-  // It is however required for the Region Vectorizer
   if(addVectorizeEnableMetadata)
   {
-    llvm::Metadata *loopVectorizeEnable[] = { llvm::MDString::get(ctx, "llvm.loop.vectorize.enable"),
+    const char * llvmVectorizeEnable = "llvm.loop.vectorize.enable";
+#ifdef HAVE_LLVM_RV
+    // Use {rv.loop.vectorize.enable, 1} to vectorize a particular loop with RV.
+    llvm::Metadata *rvLoopVectorizeEnable[] = { llvm::MDString::get(ctx, "rv.loop.vectorize.enable"),
+                                              llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(llvm::Type::getInt1Ty(ctx), true))};
+    args.push_back(llvm::MDNode::get(ctx, rvLoopVectorizeEnable));
+
+    // Use {llvm.loop.vectorize.enable, 0} to make sure the same loop is not vectorized with LLVM's LoopVectorizer.
+    llvm::Metadata *loopVectorizeDisable[] = { llvm::MDString::get(ctx, llvmVectorizeEnable),
+                                              llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(llvm::Type::getInt1Ty(ctx), false))};
+    args.push_back(llvm::MDNode::get(ctx, loopVectorizeDisable));
+
+#else
+    // llvm.loop.vectorize.enable metadata is only used by LoopVectorizer to:
+    // 1) Explicitly disable vectorization of particular loop
+    // 2) Print warning when vectorization is enabled (using metadata) and vectorization didn't occur
+    // 3) Explicitly enable vectorization of a particular loop with the Region Vectorizer
+    llvm::Metadata *loopVectorizeEnable[] = { llvm::MDString::get(ctx, llvmVectorizeEnable),
                                               llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(llvm::Type::getInt1Ty(ctx), true))};
     args.push_back(llvm::MDNode::get(ctx, loopVectorizeEnable));
-
-    /* Region Vectorizer no longer needs loop width
-    if (fRegionVectorizer) {
-      // Region Vectorizer needs loop width to be specified
-      llvm::Metadata *loopVectorWidth[] = { llvm::MDString::get(ctx, "llvm.loop.vectorize.width"),
-                                            llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 8))};
-      args.push_back(llvm::MDNode::get(ctx, loopVectorWidth));
-    }*/
-
+#endif
   }
 
   llvm::MDNode *loopMetadata = llvm::MDNode::get(ctx, args);
